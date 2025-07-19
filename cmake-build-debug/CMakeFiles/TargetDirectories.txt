@@ -1,0 +1,3 @@
+/Users/viking/Desktop/C++/Chess/cmake-build-debug/CMakeFiles/Chess.dir
+/Users/viking/Desktop/C++/Chess/cmake-build-debug/CMakeFiles/edit_cache.dir
+/Users/viking/Desktop/C++/Chess/cmake-build-debug/CMakeFiles/rebuild_cache.dir
