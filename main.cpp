@@ -64,8 +64,22 @@ int main() {
     PieceDrawer pieceDrawer(tileSize);
     MoveDrawer moveDrawer(tileSize);
 
-    std::unique_ptr<Player> whitePlayer = std::make_unique<HumanPlayer>(tileSize);
-    std::unique_ptr<Player> blackPlayer = std::make_unique<AIPlayer>(&searcher, 7500);
+    std::unique_ptr<Player> whitePlayer = std::make_unique<HumanPlayer>(tileSize, 15.0f * 60.0f, 10.0f);
+    std::unique_ptr<Player> blackPlayer = std::make_unique<AIPlayer>(&searcher, 1.0f, 10.0f * 60.0f, 10.0f);
+
+
+    bool whiteHuman = dynamic_cast<HumanPlayer*>(whitePlayer.get()) != nullptr;
+    bool blackHuman = dynamic_cast<HumanPlayer*>(blackPlayer.get()) != nullptr;
+    bool whiteAi = dynamic_cast<AIPlayer*>(whitePlayer.get()) != nullptr;
+    bool blackAi = dynamic_cast<AIPlayer*>(blackPlayer.get()) != nullptr;
+    bool blackAtBottom = blackHuman && whiteAi && !whiteHuman && !blackAi;
+
+    if (auto* humanPlayer = dynamic_cast<HumanPlayer*>(whitePlayer.get())) {
+        humanPlayer->setBlackAtBottom(blackAtBottom);
+    }
+    if (auto* humanPlayer = dynamic_cast<HumanPlayer*>(blackPlayer.get())) {
+        humanPlayer->setBlackAtBottom(blackAtBottom);
+    }
 
     std::vector<MoveRecord> moveHistory;
 
@@ -92,9 +106,24 @@ int main() {
         bool endGame = checkmate || draw;
 
         Player* currentPlayer = board.getPlayerTurn() ? blackPlayer.get() : whitePlayer.get();
-        renderer.update(board, deltaTime, moveHistory, currentPlayer);
+        if (!endGame) {
+            currentPlayer->tickClock(deltaTime);
+        }
 
-	    std::optional<Move> chosenMove = currentPlayer->selectMove(board, window);
+        bool whiteFlagged = whitePlayer->outOfTime();
+        bool blackFlagged = blackPlayer->outOfTime();
+        bool timeOut = whiteFlagged || blackFlagged;
+        endGame = endGame || timeOut;
+
+        renderer.update(board, deltaTime, moveHistory, currentPlayer, whitePlayer.get(), blackPlayer.get(), whiteFlagged, blackFlagged, blackAtBottom);
+
+	    std::optional<Move> chosenMove = std::nullopt;
+        if (!endGame && window.hasFocus()) {
+            chosenMove = currentPlayer->selectMove(board, window);
+        }
+        else if (auto* humanPlayer = dynamic_cast<HumanPlayer*>(currentPlayer)) {
+            humanPlayer->resetInput();
+        }
 
 	    if (chosenMove.has_value() && !endGame) {
 	        std::optional<Move> legalMove = normalizeMove(board, chosenMove.value());
@@ -107,6 +136,8 @@ int main() {
             Piece capturedPiece = capturedPieceForMove(board, move);
 
 	        if (board.move(move)) {
+	            currentPlayer->incrementTime();
+
 	            appendCheckSuffix(san, board);
 	            moveHistory.push_back({move, san, capturedPiece});
 	            searcher.endSearch();
@@ -120,12 +151,12 @@ int main() {
 
             Move lastMove = moveHistory.empty() ? Move() : moveHistory.back().move;
             bool highlighted = !lastMove.isNone() && (lastMove.starting() == position || lastMove.target() == position);
-            pieceDrawer.drawPiece(window, piece, position, highlighted);
+            pieceDrawer.drawPiece(window, piece, position, highlighted, blackAtBottom);
         }
 
         MoveList moves = currentPlayer->getShownMoves();
         for (int i = 0; i < moves.count; i++) {
-            moveDrawer.drawMove(window, moves[i]);
+            moveDrawer.drawMove(window, moves[i], blackAtBottom);
         }
 
         renderer.draw(window, board, deltaTime);

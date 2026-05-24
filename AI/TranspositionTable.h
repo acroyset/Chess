@@ -30,52 +30,76 @@ struct Entry {
 	}
 };
 
-class TranspositionTable {
-	std::vector<Entry> entries;
+// -----------------------------------------------------------------------
+// Two-bucket transposition table.
+//
+// Each slot holds two entries:
+//   bucket[0] — depth-preferred:  only replaced if new entry is deeper
+//   bucket[1] — always-replace:   always replaced (catches recent positions)
+//
+// On lookup we check both and return the one with matching hash.
+// This dramatically increases effective table utilisation compared to a
+// single depth-preferred replacement scheme.
+// -----------------------------------------------------------------------
+struct TTSlot {
+    Entry depth;   // depth-preferred bucket
+    Entry always;  // always-replace bucket
+};
 
+class TranspositionTable {
+	std::vector<TTSlot> slots;
 	size_t mask;
 	size_t size;
 
 public:
 
 	TranspositionTable() {
-		size_t bytes = 128ull * 1024ull * 1024ull;
-		size_t count = bytes / sizeof(Entry);
+		// 128 MB total — each slot holds 2 entries
+		size_t bytes  = 128ull * 1024ull * 1024ull;
+		size_t count  = bytes / sizeof(TTSlot);
 
 		size_t power = 1;
 		while (power * 2 <= count)
 			power *= 2;
 
 		size = power;
-		entries.resize(power);
+		slots.resize(power);
 		mask = power - 1;
 	}
 
-	[[nodiscard]] const Entry& find(const uint64_t hash) const {
-		const uint64_t index = hash & mask;
+	[[nodiscard]] Entry find(uint64_t hash) const {
+		const TTSlot& slot = slots[hash & mask];
 
-		const Entry& entry = entries[index];
-		if (entry.hash == hash) {
-			return entry;
-		}
+		// Depth-preferred bucket takes priority on a match
+		if (slot.depth.hash == hash && slot.depth.flag != FAIL)
+			return slot.depth;
 
-		static Entry empty{};
-		return empty;
+		if (slot.always.hash == hash && slot.always.flag != FAIL)
+			return slot.always;
+
+		// Return empty entry (flag == FAIL signals miss)
+		return Entry{};
 	}
 
 	void store(const Entry& entry) {
-		const uint64_t index = entry.hash & mask;
+		TTSlot& slot = slots[entry.hash & mask];
 
-		Entry& old = entries[index];
+		// Always-replace: just overwrite
+		slot.always = entry;
 
-		if (old.flag == FAIL || entry.depth >= old.depth) {
-			old = entry;
+		// Depth-preferred: replace if slot is empty, hash matches (update),
+		// or new entry is at least as deep
+		if (slot.depth.flag == FAIL ||
+		    slot.depth.hash == entry.hash ||
+		    entry.depth >= slot.depth.depth)
+		{
+			slot.depth = entry;
 		}
 	}
 
 	void clear() {
-		entries.clear();
-		entries.resize(size);
+		slots.clear();
+		slots.resize(size);
 	}
 };
 

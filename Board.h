@@ -4,7 +4,6 @@
 
 #ifndef BOARD_H
 #define BOARD_H
-#include "BitBoard.h"
 #include "BoardState.h"
 #include "AI/OpeningBook.h"
 
@@ -75,10 +74,20 @@ inline void initZobrist() {
     zobristBlackTurn = rand64();
 }
 
+// Maximum game length for fixed-size history stack
+// 512 is more than enough for any real game + search depth
+static constexpr int MAX_HISTORY = 512;
+
 class Board{
     BoardState state;
 
-    std::vector<BoardState> previousStates{};
+    // Fixed-size stack — eliminates all heap allocation during search
+    BoardState stateStack[MAX_HISTORY];
+    int stackTop = 0;
+
+    // Separate vector only for repetition detection across the root
+    // (search threads share the stack; root history is small)
+    std::vector<uint64_t> rootHashes;
 
 public:
 
@@ -93,7 +102,7 @@ public:
         initZobrist();
 
         state = BoardState();
-        previousStates.clear();
+        stackTop = 0;
 
         std::stringstream ss(fen);
 
@@ -162,12 +171,9 @@ public:
             int epFile = epPart[0] - 'a';
             int epRank = epPart[1] - '1';
 
-            // Your engine stores the pawn that moved 2 squares, not the EP target square.
             if (state.playerTurn == WHITE) {
-                // white to move means black just moved down 2
                 state.lastPawnMoved2 = {epRank + 1, epFile};
             } else {
-                // black to move means white just moved up 2
                 state.lastPawnMoved2 = {epRank - 1, epFile};
             }
         }
@@ -182,15 +188,21 @@ public:
         refreshIncrementalEval();
     }
     Board(const Board& other) {
-        state = other.state;
-        previousStates = other.previousStates;
+        state    = other.state;
+        stackTop = other.stackTop;
+        rootHashes = other.rootHashes;
+        for (int i = 0; i < stackTop; i++)
+            stateStack[i] = other.stateStack[i];
         refreshPieceBits();
         state.hash = computeHash();
         refreshIncrementalEval();
     }
     void set(const Board &other) {
-        this->state = other.state;
-        this->previousStates = other.previousStates;
+        this->state    = other.state;
+        this->stackTop = other.stackTop;
+        this->rootHashes = other.rootHashes;
+        for (int i = 0; i < stackTop; i++)
+            stateStack[i] = other.stateStack[i];
         refreshPieceBits();
         state.hash = computeHash();
         refreshIncrementalEval();
@@ -212,6 +224,12 @@ public:
     }
     [[nodiscard]] bool getPlayerTurn() const {
         return state.playerTurn;
+    }
+    [[nodiscard]] bool canCastleKingSide(bool black) const {
+        return black ? state.blackCastleKing : state.whiteCastleKing;
+    }
+    [[nodiscard]] bool canCastleQueenSide(bool black) const {
+        return black ? state.blackCastleQueen : state.whiteCastleQueen;
     }
     [[nodiscard]] float getWhiteMg() const {
         return state.whiteMg;
@@ -235,23 +253,25 @@ public:
         return state.pieceBits[piece];
     }
 
+    // --- Move generation using pieceBits iteration ---
+
     void getValidMoves(MoveList& validMoves) {
         validMoves.clear();
 
         MoveList possibleMoves;
 
-        for (Position position; position <= Position(7, 7); position++) {
-            if (getPiece(position) >> 3 != state.playerTurn) continue;
-            if (getPiece(position) == EMPTY) continue;
+        // Iterate over only occupied squares via pieceBits instead of all 64
+        uint64_t friendly = getFriendlyBits();
+        while (friendly) {
+            int sq = popLsb(friendly);
+            Position position(sq);
 
             possibleMoves.clear();
             getPossibleMoves(position, possibleMoves);
 
             for (int i = 0; i < possibleMoves.count; i++) {
-                Move move = possibleMoves[i];
-
-                if (validMove(move)) {
-                    validMoves.push(move);
+                if (validMove(possibleMoves[i])) {
+                    validMoves.push(possibleMoves[i]);
                 }
             }
         }
@@ -261,17 +281,17 @@ public:
 
         MoveList captureMoves;
 
-        for (Position position; position <= Position(7, 7); position++) {
-            if (getPiece(position) >> 3 != state.playerTurn) continue;
-            if (getPiece(position) == EMPTY) continue;
+        uint64_t friendly = getFriendlyBits();
+        while (friendly) {
+            int sq = popLsb(friendly);
+            Position position(sq);
 
             captureMoves.clear();
             getPossibleCaptures(position, captureMoves);
 
             for (int i = 0; i < captureMoves.count; i++) {
-                Move move = captureMoves[i];
-                if (validMove(move)) {
-                    validMoves.push(move);
+                if (validMove(captureMoves[i])) {
+                    validMoves.push(captureMoves[i]);
                 }
             }
         }
@@ -315,14 +335,19 @@ public:
         return state.lastPawnMoveOrCapture >= 100;
     }
     [[nodiscard]] bool drawRepetition() const {
-        uint64_t current = getHash();
+        uint64_t current = state.hash;
         int count = 0;
-        for (auto it = previousStates.rbegin(); it != previousStates.rend(); ++it) {
-            if (it->hash == current && ++count >= 2) return true;
+
+        // Check stack (search history)
+        for (int i = stackTop - 1; i >= 0; i--) {
+            if (stateStack[i].hash == current && ++count >= 2) return true;
+        }
+        // Check root history (game history before search started)
+        for (auto h : rootHashes) {
+            if (h == current && ++count >= 2) return true;
         }
         return false;
     }
-
 
     bool move(const Move& move) {
 
@@ -334,19 +359,21 @@ public:
             return false;
         }
         if (piece >> 3 != state.playerTurn) {
-            std::cerr << "Empty Piece, Flag:" << std::bitset<4>(move.getData() >> 12) << " S:" << int(move.starting().index) << " T:" << int(move.target().index) << std::endl;
+            std::cerr << "Wrong color, Flag:" << std::bitset<4>(move.getData() >> 12) << " S:" << int(move.starting().index) << " T:" << int(move.target().index) << std::endl;
             std::vector<int> x;
             std::cout << x[0] << std::endl;
             return false;
         }
 
-        previousStates.push_back(state);
+        // Push onto fixed-size stack — zero heap allocation
+        stateStack[stackTop++] = state;
+
         removePieceFromEval(piece, move.starting());
 
         state.lastPawnMoveOrCapture++;
         if (move.isCapture()) state.lastPawnMoveOrCapture = 0;
 
-        state.hash ^= zobristPieces[piece][move.starting().index]; // remove moving piece
+        state.hash ^= zobristPieces[piece][move.starting().index];
 
         if (!state.lastPawnMoved2.isNone())
             state.hash ^= zobristEnPassant[state.lastPawnMoved2.file()];
@@ -364,7 +391,6 @@ public:
             case WHITE_PAWN: {
                 state.lastPawnMoveOrCapture = 0;
 
-                // en passant
                 if (abs(move.starting().rank() - move.target().rank()) == 2) {
                     state.lastPawnMoved2 = move.target();
                     state.hash ^= zobristEnPassant[state.lastPawnMoved2.file()];
@@ -377,7 +403,6 @@ public:
                     clear(capturedPawn);
                 }
 
-                // promotion
                 if (move.isPromotion()) {
                     switch (move.promotionPiece()) {
                         case 0: {piece = WHITE_QUEEN; break;}
@@ -393,7 +418,6 @@ public:
             case BLACK_PAWN: {
                 state.lastPawnMoveOrCapture = 0;
 
-                // en passant
                 if (abs(move.starting().rank() - move.target().rank()) == 2) {
                     state.lastPawnMoved2 = move.target();
                     state.hash ^= zobristEnPassant[state.lastPawnMoved2.file()];
@@ -406,7 +430,6 @@ public:
                     clear(capturedPawn);
                 }
 
-                // promotion
                 if (move.isPromotion()) {
                     switch (move.promotionPiece()) {
                         case 0: {piece = BLACK_QUEEN; break;}
@@ -489,7 +512,7 @@ public:
 
         if (move.isCapture() && !move.isEnPassant()) {
             Piece capturedPiece = getPiece(move.target());
-            state.hash ^= zobristPieces[capturedPiece][move.target().index]; // remove captured piece
+            state.hash ^= zobristPieces[capturedPiece][move.target().index];
             removePieceFromEval(capturedPiece, move.target());
 
             if (move.target() == Position{0,0}) state.whiteCastleQueen = false;
@@ -518,10 +541,32 @@ public:
         return true;
     }
     void undoMove() {
-        if (previousStates.empty()) return;
+        if (stackTop == 0) return;
+        state = stateStack[--stackTop];
+    }
 
-        state = previousStates.back();
-        previousStates.pop_back();
+    // Null move: flip side to move, clear EP, update hash
+    // Used by null move pruning in search
+    void makeNullMove() {
+        stateStack[stackTop++] = state;
+
+        if (!state.lastPawnMoved2.isNone()) {
+            state.hash ^= zobristEnPassant[state.lastPawnMoved2.file()];
+            state.lastPawnMoved2.setNone();
+        }
+
+        state.hash ^= zobristBlackTurn;
+        state.playerTurn = !state.playerTurn;
+        state.lastPawnMoveOrCapture++; // avoid 50-move false draws in search
+    }
+    void undoNullMove() {
+        if (stackTop == 0) return;
+        state = stateStack[--stackTop];
+    }
+
+    // Called at root before search starts — records game history for repetition detection
+    void setRootHashes(const std::vector<uint64_t>& hashes) {
+        rootHashes = hashes;
     }
 
     [[nodiscard]] uint64_t computeHash() const {
@@ -536,12 +581,10 @@ public:
             hash ^= zobristPieces[piece][position.index];
         }
 
-        // side to move
         if (getPlayerTurn()) {
             hash ^= zobristBlackTurn;
         }
 
-        // castling rights
         int castleIndex = 0;
 
         if (state.whiteCastleKing)  castleIndex |= 1;
@@ -551,7 +594,6 @@ public:
 
         hash ^= zobristCastle[castleIndex];
 
-        // en passant
         if (!state.lastPawnMoved2.isNone()) {
             hash ^= zobristEnPassant[state.lastPawnMoved2.file()];
         }
@@ -595,8 +637,6 @@ public:
         hash ^= polyglotRandom[64 * polyPiece + square];
     }
 
-    // castling
-
     if (state.whiteCastleKing)
         hash ^= polyglotRandom[768];
 
@@ -608,8 +648,6 @@ public:
 
     if (state.blackCastleQueen)
         hash ^= polyglotRandom[771];
-
-    // en passant
 
     if (!state.lastPawnMoved2.isNone()) {
 
@@ -639,8 +677,6 @@ public:
             hash ^= polyglotRandom[772 + file];
     }
 
-    // white to move
-
     if (!state.playerTurn)
         hash ^= polyglotRandom[780];
 
@@ -648,6 +684,26 @@ public:
 }
 
 private:
+
+    static int popLsb(uint64_t& bits) {
+        int sq = __builtin_ctzll(bits);
+        bits &= bits - 1;
+        return sq;
+    }
+
+    [[nodiscard]] uint64_t getFriendlyBits() const {
+        if (!state.playerTurn) {
+            // White pieces: types 1-6
+            return state.pieceBits[WHITE_PAWN]   | state.pieceBits[WHITE_KNIGHT] |
+                   state.pieceBits[WHITE_BISHOP] | state.pieceBits[WHITE_ROOK]   |
+                   state.pieceBits[WHITE_QUEEN]  | state.pieceBits[WHITE_KING];
+        } else {
+            // Black pieces: types 9-14
+            return state.pieceBits[BLACK_PAWN]   | state.pieceBits[BLACK_KNIGHT] |
+                   state.pieceBits[BLACK_BISHOP] | state.pieceBits[BLACK_ROOK]   |
+                   state.pieceBits[BLACK_QUEEN]  | state.pieceBits[BLACK_KING];
+        }
+    }
 
     void clearIncrementalEval() {
         state.whiteMg = 0.0f;
@@ -702,6 +758,7 @@ private:
     void resetBoard() {
 
         state = BoardState();
+        stackTop = 0;
 
         state.board[7] = 0xCABDEBAC;
         state.board[6] = 0x99999999;
@@ -1196,7 +1253,7 @@ private:
                 return p;
         }
 
-        return Position{}; // or none position
+        return Position{};
     }
 
     void switchPlayer() {

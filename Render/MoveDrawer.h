@@ -23,16 +23,19 @@ public:
         moveMarker.setOutlineThickness(10);
     }
 
-    void drawMove(sf::RenderWindow& window, const Move &move) {
+    void drawMove(sf::RenderWindow& window, const Move &move, bool blackAtBottom) {
+        int displayFile = blackAtBottom ? 7 - move.target().file() : move.target().file();
+        int displayRank = blackAtBottom ? move.target().rank() : 7 - move.target().rank();
+
         if (move.isCapture()) {
             moveMarker.setRadius(tileSize/2.5f);
             moveMarker.setOutlineThickness(10);
-            moveMarker.setPosition({float(move.target().file())*tileSize+10, float(7-move.target().rank())*tileSize+10});
+            moveMarker.setPosition({float(displayFile)*tileSize+10, float(displayRank)*tileSize+10});
             window.draw(moveMarker);
         } else {
             moveMarker.setRadius(0.00001);
             moveMarker.setOutlineThickness(18);
-            moveMarker.setPosition({float(move.target().file()+0.5)*tileSize, float(7-move.target().rank()+0.5)*tileSize});
+            moveMarker.setPosition({(float(displayFile)+0.5f)*tileSize, (float(displayRank)+0.5f)*tileSize});
             window.draw(moveMarker);
         }
     }

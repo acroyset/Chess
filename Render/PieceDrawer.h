@@ -53,16 +53,19 @@ public:
         coordinateText.setStyle(sf::Text::Bold);
     }
 
-    void drawPiece(sf::RenderWindow& window, Piece piece, Position position, bool highlighted) {
+    void drawPiece(sf::RenderWindow& window, Piece piece, Position position, bool highlighted, bool blackAtBottom) {
 
         bool lightSquare = position.rank()%2 == 0 xor position.file()%2 == 0;
+        int displayFile = blackAtBottom ? 7 - position.file() : position.file();
+        int displayRank = blackAtBottom ? position.rank() : 7 - position.rank();
+
         if (lightSquare) {
             background.setFillColor(highlighted ? whiteHighlighted : white);
         } else {
             background.setFillColor(highlighted ? greenHighlighted : green);
         }
 
-        background.setPosition({float(position.file())*tileSize, float(7-position.rank())*tileSize});
+        background.setPosition({float(displayFile)*tileSize, float(displayRank)*tileSize});
         window.draw(background);
 
         if (position.isNone()) return;
@@ -73,31 +76,33 @@ public:
             getSpriteSheetCoords(piece, x, y);
 
             pieceMarker.setTextureRect(sf::IntRect({int(x*textureSize.x/6), int(y*textureSize.y/2)}, {int(textureSize.x)/6, int(textureSize.y)/2}));
-            pieceMarker.setPosition({tileSize*float(position.file()), tileSize*float(7-position.rank())});
+            pieceMarker.setPosition({tileSize*float(displayFile), tileSize*float(displayRank)});
             window.draw(pieceMarker);
         }
 
-        drawCoordinates(window, position, lightSquare);
+        drawCoordinates(window, position, lightSquare, blackAtBottom);
     }
 
     private:
 
-    void drawCoordinates(sf::RenderWindow& window, Position position, bool lightSquare) {
+    void drawCoordinates(sf::RenderWindow& window, Position position, bool lightSquare, bool blackAtBottom) {
         if (!fontLoaded) return;
 
         coordinateText.setFillColor(lightSquare ? green : white);
 
-        float x = float(position.file()) * tileSize;
-        float y = float(7-position.rank()) * tileSize;
+        int displayFile = blackAtBottom ? 7 - position.file() : position.file();
+        int displayRank = blackAtBottom ? position.rank() : 7 - position.rank();
+        float x = float(displayFile) * tileSize;
+        float y = float(displayRank) * tileSize;
         float margin = tileSize * 0.05f;
 
-        if (position.file() == 0) {
+        if (displayFile == 0) {
             coordinateText.setString(std::to_string(position.rank() + 1));
             coordinateText.setPosition({x + margin, y + margin * 0.5f});
             window.draw(coordinateText);
         }
 
-        if (position.rank() == 0) {
+        if (displayRank == 7) {
             coordinateText.setString(std::string(1, char('a' + position.file())));
             coordinateText.setPosition({x + tileSize - margin * 3.0f, y + tileSize - margin * 4.0f});
             window.draw(coordinateText);

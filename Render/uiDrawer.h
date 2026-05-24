@@ -125,8 +125,13 @@ class uiDrawer {
     sf::Color statusColor{152, 160, 166};
     SearchResult lastAiSearch{};
     bool hasLastAi = false;
+    bool lastAiOpening = false;
+    bool lastAiSearchBlackToMove = false;
     std::vector<MoveRecord> history;
     bool pieceTextureLoaded = false;
+    float whiteTime = 0.0f;
+    float blackTime = 0.0f;
+    bool blackAtBottom = false;
 
     sf::Color panelColor{22, 24, 27};
     sf::Color sectionColor{31, 34, 38};
@@ -194,7 +199,7 @@ public:
         drawMoveHistory(window);
     }
 
-    void update(Board& board, float deltaTime, const std::vector<MoveRecord>& moveHistory, Player* player) {
+    void update(Board& board, float deltaTime, const std::vector<MoveRecord>& moveHistory, Player* player, const Player* whitePlayer, const Player* blackPlayer, bool whiteFlagged, bool blackFlagged, bool blackAtBottom) {
         bool whiteCheck = board.check(false);
         bool blackCheck = board.check(true);
         bool checkmate = board.checkMate();
@@ -208,7 +213,15 @@ public:
             lastAi = ai;
         }
 
-        if (checkmate) {
+        if (whiteFlagged) {
+            statusText = "White loses on time";
+            statusColor = warningRed;
+        }
+        else if (blackFlagged) {
+            statusText = "Black loses on time";
+            statusColor = warningRed;
+        }
+        else if (checkmate) {
             statusText = whiteCheckmated ? "Black wins by checkmate" : "White wins by checkmate";
             statusColor = warningRed;
         }
@@ -231,13 +244,20 @@ public:
 
         if (lastAi != nullptr) {
             lastAiSearch = lastAi->getLastSearch();
+            lastAiOpening = lastAi->usedOpeningBook();
+            lastAiSearchBlackToMove = lastAi->getLastSearchBlackToMove();
             hasLastAi = true;
         }
         else {
             hasLastAi = false;
+            lastAiOpening = false;
+            lastAiSearchBlackToMove = false;
         }
 
         history = moveHistory;
+        whiteTime = whitePlayer != nullptr ? whitePlayer->getTimeRemaining() : 0.0f;
+        blackTime = blackPlayer != nullptr ? blackPlayer->getTimeRemaining() : 0.0f;
+        this->blackAtBottom = blackAtBottom;
     }
 
 private:
@@ -376,8 +396,13 @@ private:
         drawSection(window, y, h);
         drawText(window, "MATERIAL", 13, x, y + 14.0f, mutedText, true);
         int materialDiff = whiteMaterial - blackMaterial;
-        drawCapturedRow(window, "WHITE TOOK", captures, true, y + 38.0f, materialDiff > 0 ? materialDiff : 0);
-        drawCapturedRow(window, "BLACK TOOK", captures, false, y + 92.0f, materialDiff < 0 ? -materialDiff : 0);
+        if (blackAtBottom) {
+            drawCapturedRow(window, "WHITE", whiteTime, captures, true, y + 38.0f, materialDiff > 0 ? materialDiff : 0);
+            drawCapturedRow(window, "BLACK", blackTime, captures, false, y + 92.0f, materialDiff < 0 ? -materialDiff : 0);
+        } else {
+            drawCapturedRow(window, "BLACK", blackTime, captures, false, y + 38.0f, materialDiff < 0 ? -materialDiff : 0);
+            drawCapturedRow(window, "WHITE", whiteTime, captures, true, y + 92.0f, materialDiff > 0 ? materialDiff : 0);
+        }
     }
 
     void drawAiSection(sf::RenderWindow& window) {
@@ -393,10 +418,18 @@ private:
             return;
         }
 
-        drawStatRow(window, "Depth", std::to_string(lastAiSearch.depth), y + 46.0f);
-        drawStatRow(window, "Eval", formatEval(lastAiSearch.eval, lastAiSearch.mate), y + 68.0f);
-        drawStatRow(window, "Evals", std::to_string(lastAiSearch.positionsEvaluated), y + 90.0f);
-        drawStatRow(window, "TT", std::to_string(lastAiSearch.ttLookups), y + 112.0f);
+        if (lastAiOpening) {
+            drawStatRow(window, "Mode", "Opening", y + 46.0f);
+            return;
+        }
+
+        float aiEval = lastAiSearchBlackToMove ? -lastAiSearch.eval : lastAiSearch.eval;
+
+        drawStatRow(window, "Depth", std::to_string(lastAiSearch.depth), y + 44.0f);
+        drawStatRow(window, "Eval", formatEval(aiEval, lastAiSearch.mate), y + 62.0f);
+        drawStatRow(window, "Evals", std::to_string(lastAiSearch.positionsEvaluated), y + 80.0f);
+        drawStatRow(window, "Nodes/s", std::to_string(lastAiSearch.nodesPerSecond), y + 98.0f);
+        drawStatRow(window, "TT", std::to_string(lastAiSearch.ttLookups), y + 116.0f);
         drawStatRow(window, "Time", std::to_string(lastAiSearch.timeTaken) + " ms", y + 134.0f);
     }
 
@@ -463,7 +496,7 @@ private:
         return counts;
     }
 
-    void drawCapturedRow(sf::RenderWindow& window, const std::string& label, const std::array<int, 16>& captures, bool whiteCaptured, float y, int materialPlus) {
+    void drawCapturedRow(sf::RenderWindow& window, const std::string& label, float playerTime, const std::array<int, 16>& captures, bool whiteCaptured, float y, int materialPlus) {
         float x = sectionX() + pad;
         float rightX = sectionX() + sectionW() - pad;
         const std::array<Piece, 5> pieces = whiteCaptured
@@ -473,8 +506,9 @@ private:
 
         drawText(window, label, 13, x, y, mutedText, true);
         if (materialPlus > 0) {
-            drawTextRight(window, "+" + std::to_string(materialPlus), 16, rightX, y - 1.0f, primaryText, true);
+            drawText(window, "+" + std::to_string(materialPlus), 16, x + 58.0f, y - 2.0f, primaryText, true);
         }
+        drawTextRight(window, formatClock(playerTime), 24, rightX, y - 8.0f, clockColor(playerTime), true);
 
         float iconSize = 34.0f;
         float stackStep = 12.0f;
@@ -495,7 +529,7 @@ private:
         }
 
         if (!hasCaptures) {
-            drawText(window, "None", 15, x, y + 22.0f, mutedText);
+            drawText(window, "", 15, x, y + 22.0f, mutedText);
         }
     }
 
@@ -633,13 +667,36 @@ private:
     std::string formatEval(float eval, bool mate) const {
         std::ostringstream ss;
         if (mate) {
-            ss << (eval < 0.0f ? "-M" : "+M") << int(std::abs(eval));
+            ss << 'M' << int(std::abs(eval));
             return ss.str();
         }
 
         if (eval > 0.0f) ss << '+';
         ss << std::fixed << std::setprecision(2) << eval;
         return ss.str();
+    }
+
+    static std::string formatClock(float seconds) {
+        if (seconds < 60.0f) {
+            int centiseconds = std::max(0, int(std::ceil(seconds * 100.0f)));
+            centiseconds = std::min(5999, centiseconds);
+
+            std::ostringstream ss;
+            ss << centiseconds / 100 << '.' << std::setw(2) << std::setfill('0') << centiseconds % 100;
+            return ss.str();
+        }
+
+        int totalSeconds = std::max(0, int(std::ceil(seconds)));
+        int minutes = totalSeconds / 60;
+        int secs = totalSeconds % 60;
+
+        std::ostringstream ss;
+        ss << minutes << ':' << std::setw(2) << std::setfill('0') << secs;
+        return ss.str();
+    }
+
+    sf::Color clockColor(float seconds) const {
+        return seconds < 20.0f ? warningRed : primaryText;
     }
 };
 
