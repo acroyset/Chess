@@ -1,13 +1,16 @@
-cmake_minimum_required(VERSION 3.17)
+cmake_minimum_required(VERSION 3.20)
 project(Chess)
 
 set(CMAKE_CXX_STANDARD 17)
 
-include_directories("/opt/homebrew/include")
-link_directories("/opt/homebrew/opt/sfml/lib")
+set(SFML_DIR "/opt/homebrew/Cellar/sfml/3.0.2/lib/cmake/SFML")
 
-add_executable(Chess main.cpp
-        Board.h
-        BoardState.h)
+find_package(SFML 3 REQUIRED COMPONENTS Graphics Window System)
 
-target_link_libraries(Chess sfml-graphics sfml-window sfml-system)
+add_executable(Chess main.cpp)
+
+target_link_libraries(Chess
+        SFML::Graphics
+        SFML::Window
+        SFML::System
+)

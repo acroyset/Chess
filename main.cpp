@@ -1,186 +1,134 @@
 #include <iostream>
-#include "Board.h"
-#include <SFML/Graphics.hpp>
+#include <sstream>
+
+#include "AI/AIPlayer.h"
+#include "HumanPlayer.h"
+#include "Render/MoveDrawer.h"
+#include "Render/PieceDrawer.h"
+#include "Player.h"
+#include "Render/uiDrawer.h"
+
+std::optional<Move> normalizeMove(Board& board, Move move) {
+    MoveList legalMoves;
+    board.getValidMoves(legalMoves);
+
+    for (int i = 0; i < legalMoves.count; i++) {
+        Move legalMove = legalMoves[i];
+        if (legalMove.starting() == move.starting() && legalMove.target() == move.target()) {
+            return legalMove;
+        }
+    }
+
+    return std::nullopt;
+}
+
+Piece capturedPieceForMove(const Board& board, Move move) {
+    if (move.isEnPassant()) {
+        Piece movingPiece = board.getPiece(move.starting());
+        return movingPiece == WHITE_PAWN ? BLACK_PAWN : WHITE_PAWN;
+    }
+
+    return board.getPiece(move.target());
+}
 
 int main() {
+
+    openingBook.clear();
+    loadOpeningBook("Openings/gm2001.bin");
+    loadOpeningBook("Openings/komodo.bin");
+    loadOpeningBook("Openings/rodent.bin");
+
+    // setup window
     sf::ContextSettings settings;
-    settings.antialiasingLevel = 8;
-    sf::RenderWindow window(sf::VideoMode::getDesktopMode(), "Fullscreen Window", sf::Style::Fullscreen, settings);
+    settings.depthBits = 24;
+    settings.stencilBits = 8;
+    settings.antiAliasingLevel = 8;
+    sf::RenderWindow window(sf::VideoMode::getDesktopMode(), "Fullscreen Window", sf::Style::Default, sf::State::Fullscreen, settings);
     window.setFramerateLimit(60);
 
-    sf::Font font;
-    if (!font.loadFromFile("/System/Library/Fonts/Helvetica.ttc")) {
-        std::cerr << "Error loading font\n";
-        return -1;
+    const sf::ContextSettings actualSettings = window.getSettings();
+    if (actualSettings.antiAliasingLevel < settings.antiAliasingLevel) {
+        std::cerr << "Requested " << settings.antiAliasingLevel
+                  << "x anti-aliasing, got "
+                  << actualSettings.antiAliasingLevel << "x\n";
     }
 
-    sf::Text text;
-    text.setFont(font);             // Set the font
-    text.setCharacterSize(12);       // Set the font size (in pixels)
-    text.setFillColor(sf::Color::White); // Set the text color
-    text.setPosition(900, 0);
+    int width = int(window.getSize().x);
+    int height = int(window.getSize().y);
+    float tileSize = float(height)/8.0f;
 
-    sf::RectangleShape background = sf::RectangleShape(sf::Vector2f(112.5f, 112.5f));
-    sf::Color green = sf::Color(120, 155, 100);
-    sf::Color white = sf::Color(217, 213, 186);
-    sf::Color yellow = sf::Color(244,  247, 148);
-    sf::Color red = sf::Color(200, 75, 70);
+    Searcher searcher;
+    uiDrawer renderer(width, height, searcher);
 
-    sf::CircleShape moveMarker = sf::CircleShape(0.0001);
-    moveMarker.setFillColor(sf::Color::Transparent);
-    moveMarker.setOutlineColor(sf::Color(0, 0, 0, 100));
-    moveMarker.setOutlineThickness(10);
+    Board board;
+    PieceDrawer pieceDrawer(tileSize);
+    MoveDrawer moveDrawer(tileSize);
 
-    sf::Texture textureMap;
-    if (!textureMap.loadFromFile("/Users/viking/desktop/C++/Chess/ChessPieces.png")) {
-        std::cerr << "Error loading texture!" << std::endl;
-        return -1;
-    }
-    auto* pieceMarker = new sf::Sprite();
-    sf::Vector2 textureSize = sf::Vector2f(389, 129);
-    pieceMarker->setScale(float(112.5f/(textureSize.x/6)*0.8), float(112.5f/(textureSize.y/2)*0.8));
+    std::unique_ptr<Player> whitePlayer = std::make_unique<HumanPlayer>(tileSize);
+    std::unique_ptr<Player> blackPlayer = std::make_unique<AIPlayer>(&searcher, 7500);
 
-    int startRank = 8;
-    int startFile = 8;
+    std::vector<MoveRecord> moveHistory;
 
-    Board board = Board();
-
-    BoardState* validMoves = board.board;
-
+    searcher.startSearch(board);
     sf::Clock clock;
     while (window.isOpen()) {
-        sf::Event event{};
-        while (window.pollEvent(event)) {
-            if (event.type == sf::Event::Closed)
+        while (const std::optional event = window.pollEvent()) {
+            if (event->is<sf::Event::Closed>()) {
                 window.close();
+            }
+            if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
+                if (keyPressed->code == sf::Keyboard::Key::Escape) {
+                    window.close();
+                }
+            }
         }
 
         float deltaTime = clock.restart().asSeconds();
-        if (board.KingInCheck(board.board, false)) {
-            text.setString(" Fps: " + std::to_string(1/deltaTime) + "Check");
-        } else {
-            text.setString(" Fps: " + std::to_string(1/deltaTime));
-        }
-
-
-        if (event.type == sf::Event::MouseButtonPressed) {
-            if (event.mouseButton.button == sf::Mouse::Left) {
-                sf::Vector2i mousePos = sf::Mouse::getPosition(window);
-                int rank = floor(float(mousePos.y)/112.5f);
-                int file = floor(float(mousePos.x)/112.5f);
-                if (rank <= 7 && file <= 7) {
-                    if (startRank == 8) {
-                        if (validMoves->GetState(rank, file) != EMPTY) {
-                            startRank = rank;
-                            startFile = file;
-                            validMoves = board.validMoves(rank, file);
-                        }
-                    } else {
-                        validMoves = board.moveValid(startRank, startFile, rank, file, validMoves);
-                        startRank = 8;
-                        startFile = 8;
-                    }
-                }
-            }
-        }
 
         window.clear();
 
-        for (int rank = 0; rank < 8; rank++) {
-            for (int file = 0; file < 8; file++) {
-                if (board.pieceTargeted(board.board, rank, file, false)) {
-                    background.setFillColor(red);
-                } else if (rank == startRank && file == startFile) {
-                    background.setFillColor(yellow);
-                } else if (rank%2 == 0 xor file%2 == 0) {
-                    background.setFillColor(green);
-                } else {
-                    background.setFillColor(white);
-                }
-                background.setPosition(float(file)*112.5f, float(rank)*112.5f);
-                window.draw(background);
+        bool checkmate = board.checkMate();
+        bool draw = board.draw();
+        bool endGame = checkmate || draw;
 
-                pieceMarker->setTexture(textureMap);
-                float x;
-                float y;
-                SquareState type = board.board->GetState(rank, file);
-                if (type != EMPTY and type != VALID_MOVE and type != VALID_CAPTURE) {
-                    switch (type) {
-                        case BLACK_KING:
-                            x=0;
-                            y=1;
-                            break;
-                        case BLACK_QUEEN:
-                            x=1;
-                            y=1;
-                            break;
-                        case BLACK_BISHOP:
-                            x=2;
-                            y=1;
-                            break;
-                        case BLACK_KNIGHT:
-                            x=3;
-                            y=1;
-                            break;
-                        case BLACK_ROOK:
-                            x=4;
-                            y=1;
-                            break;
-                        case BLACK_PAWN:
-                            x=5;
-                            y=1;
-                            break;
-                        case WHITE_KING:
-                            x=0;
-                            y=0;
-                            break;
-                        case WHITE_QUEEN:
-                            x=1;
-                            y=0;
-                            break;
-                        case WHITE_BISHOP:
-                            x=2;
-                            y=0;
-                            break;
-                        case WHITE_KNIGHT:
-                            x=3;
-                            y=0;
-                            break;
-                        case WHITE_ROOK:
-                            x=4;
-                            y=0;
-                            break;
-                        case WHITE_PAWN:
-                            x=5;
-                            y=0;
-                            break;
-                        default:
-                            x=0;
-                            y=0;
-                            break;
-                    }
+        Player* currentPlayer = board.getPlayerTurn() ? blackPlayer.get() : whitePlayer.get();
+        renderer.update(board, deltaTime, moveHistory, currentPlayer);
 
-                    pieceMarker->setTextureRect(sf::IntRect(int(x*textureSize.x/6), int(y*textureSize.y/2), int(textureSize.x)/6, int(textureSize.y)/2));
-                    pieceMarker->setPosition(float(file+0.1)*112.5f, float(rank+0.1)*112.5f);
-                    window.draw(*pieceMarker);
-                }
+	    std::optional<Move> chosenMove = currentPlayer->selectMove(board, window);
 
-
-                if (validMoves->GetState(rank, file) == VALID_MOVE) {
-                    moveMarker.setRadius(0.00001);
-                    moveMarker.setOutlineThickness(18);
-                    moveMarker.setPosition(float(file)*112.5f+56.25f, float(rank)*112.5f+56.25f);
-                    window.draw(moveMarker);
-                } else if (validMoves->GetState(rank, file) == VALID_CAPTURE) {
-                    moveMarker.setRadius(46.25);
-                    moveMarker.setOutlineThickness(10);
-                    moveMarker.setPosition(float(file)*112.5f+10, float(rank)*112.5f+10);
-                    window.draw(moveMarker);
-                }
+	    if (chosenMove.has_value() && !endGame) {
+	        std::optional<Move> legalMove = normalizeMove(board, chosenMove.value());
+            if (!legalMove.has_value()) {
+                continue;
             }
+
+	        Move move = legalMove.value();
+	        std::string san = moveToSAN(board, move);
+            Piece capturedPiece = capturedPieceForMove(board, move);
+
+	        if (board.move(move)) {
+	            appendCheckSuffix(san, board);
+	            moveHistory.push_back({move, san, capturedPiece});
+	            searcher.endSearch();
+	            searcher.startSearch(board);
+	        }
+	    }
+
+        for (Position position; position <= Position(7, 7); position++) {;
+
+            Piece piece = board.getPiece(position);
+
+            Move lastMove = moveHistory.empty() ? Move() : moveHistory.back().move;
+            bool highlighted = !lastMove.isNone() && (lastMove.starting() == position || lastMove.target() == position);
+            pieceDrawer.drawPiece(window, piece, position, highlighted);
         }
 
-        window.draw(text);
+        MoveList moves = currentPlayer->getShownMoves();
+        for (int i = 0; i < moves.count; i++) {
+            moveDrawer.drawMove(window, moves[i]);
+        }
+
+        renderer.draw(window, board, deltaTime);
         window.display();
     }
     return 0;

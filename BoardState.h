@@ -1,89 +1,216 @@
 //
-// Created by Andreas Royset on 11/30/24.
+// Created by Andreas Royset on 5/20/26.
 //
 
 #ifndef BOARDSTATE_H
 #define BOARDSTATE_H
+#include <array>
+#include <iostream>
 
-enum SquareState {
-    BLACK_KING=-7,
-    BLACK_QUEEN=-6,
-    BLACK_ROOK=-5,
-    BLACK_BISHOP=-4,
-    BLACK_KNIGHT=-3,
-    BLACK_PAWN=-2,
-    VALID_MOVE=-1,
-    EMPTY=0,
-    VALID_CAPTURE=1,
-    WHITE_PAWN=2,
-    WHITE_KNIGHT=3,
-    WHITE_BISHOP=4,
-    WHITE_ROOK=5,
-    WHITE_QUEEN=6,
-    WHITE_KING=7
+enum PieceType : uint8_t {
+	NONE,
+	WHITE,
+	BLACK
+};
+
+struct Position {
+
+	uint8_t index;
+
+	constexpr Position() : index(0) {}
+	constexpr explicit Position(uint8_t i) : index(i) {}
+	constexpr Position(int rank, int file) {
+		 index = (rank >= 0 && rank < 8 && file >= 0 && file < 8) ?
+			uint8_t(rank * 8 + file) :
+			0x80;
+	}
+
+	bool operator == (const Position& other) const {
+		return index == other.index;
+	}
+	bool operator != (const Position& other) const {
+		return index != other.index;
+	}
+	bool operator < (const Position& other) const {
+		return index < other.index;
+	}
+	bool operator > (const Position& other) const {
+		return index > other.index;
+	}
+	bool operator <= (const Position& other) const {
+		return index <= other.index;
+	}
+	bool operator >= (const Position& other) const {
+		return index >= other.index;
+	}
+	void operator ++ (int) {
+		index++;
+	}
+
+	void setNone() {
+		index = 0x80;
+	}
+
+	[[nodiscard]] bool isNone() const {
+		return index & 0x80;
+	}
+
+	[[nodiscard]] uint8_t rank() const {
+		return index >> 3;
+	}
+	[[nodiscard]] uint8_t file() const {
+		return index & 7;
+	}
+
+	[[nodiscard]] bool add(int dr, int df) {
+		int r = int(rank()) + dr;
+		int f = int(file()) + df;
+
+		if (r < 0 || r >= 8 || f < 0 || f >= 8) {
+			setNone();
+			return false;
+		}
+
+		index = uint8_t(r * 8 + f);
+		return true;
+	}
+};
+
+enum MoveFlag : uint8_t {
+	None        = 0b0000,
+	Capture     = 0b1000,
+	CastleKing  = 0b0010,
+	CastleQueen = 0b0011,
+	EnPassant   = 0b1001,
+	PromotionQ  = 0b0100,
+	PromotionR  = 0b0101,
+	PromotionB  = 0b0110,
+	PromotionN  = 0b0111,
+	PromotionQC = 0b1100,
+	PromotionRC = 0b1101,
+	PromotionBC = 0b1110,
+	PromotionNC = 0b1111,
+};
+
+class Move {
+	uint16_t data; // FFFF ssssss tttttt
+
+public:
+
+	Move() {
+		data = 0xFF;
+	}
+	Move(const Position starting, const Position target, MoveFlag flag = None) {
+		if (starting.isNone() || target.isNone()) std::cerr << "Error making move" << std::endl;
+		data = flag << 12 | starting.index << 6 | target.index;
+	}
+
+	bool operator==(const Move & other) const {
+		return data == other.data;
+	}
+
+	[[nodiscard]] bool isNone() const {
+		return data == 0xFF;
+	}
+
+	[[nodiscard]] bool isCapture() const {
+		return data >> 15;
+	}
+	[[nodiscard]] bool isCastleKing() const {
+		return data >> 12 == CastleKing;
+	}
+	[[nodiscard]] bool isCastleQueen() const {
+		return data >> 12 == CastleQueen;
+	}
+	[[nodiscard]] bool isEnPassant() const {
+		return data >> 12 == EnPassant;
+	}
+	[[nodiscard]] bool isPromotion() const {
+		return data >> 14 & 1;
+	}
+	[[nodiscard]] uint8_t promotionPiece() const {
+		if (!isPromotion()) std::cerr << "not promotion" << std::endl;
+		return data >> 12 & 0b0011;
+	}
+
+	[[nodiscard]] Position starting() const {
+		return Position(data >> 6 & 0x3F);
+	}
+	[[nodiscard]] Position target() const {
+		return Position(data & 0x3F);
+	}
+
+	uint16_t getData() const{return data;}
+};
+
+struct MoveList {
+	Move moves[256];
+	int count = 0;
+
+	void push(Move m) { moves[count++] = m; }
+
+	Move& operator[](int idx) {return moves[idx];}
+	Move& operator[](size_t idx) {return moves[idx];}
+
+	void clear(){count = 0;}
+};
+
+enum Piece : uint8_t {
+
+	EMPTY        = 0x0, // 0
+
+	WHITE_PAWN   = 0x1, // 1
+	WHITE_KNIGHT = 0x2, // 2
+	WHITE_BISHOP = 0x3, // 3
+	WHITE_ROOK   = 0x4, // 4
+	WHITE_QUEEN  = 0x5, // 5
+	WHITE_KING   = 0x6, // 6
+
+	BLACK_PAWN   = 0x9, // 9
+	BLACK_KNIGHT = 0xA, // 10
+	BLACK_BISHOP = 0xB, // 11
+	BLACK_ROOK   = 0xC, // 12
+	BLACK_QUEEN  = 0xD, // 13
+	BLACK_KING   = 0xE  // 14
 
 };
 
-class BoardState {
-    private:
-    SquareState board[8][8];
-    public:
-    BoardState(){
-        board[0][0]=BLACK_ROOK;
-        board[0][1]=BLACK_KNIGHT;
-        board[0][2]=BLACK_BISHOP;
-        board[0][3]=BLACK_QUEEN;
-        board[0][4]=BLACK_KING;
-        board[0][5]=BLACK_BISHOP;
-        board[0][6]=BLACK_KNIGHT;
-        board[0][7]=BLACK_ROOK;
-        for(int i = 0; i < 8; i++){
-            board[1][i] = BLACK_PAWN;
-        }
+struct BoardState {
+	std::array<uint32_t, 8> board{};
+	std::array<uint64_t, 16> pieceBits{};
 
-        for(int i = 2; i < 6; i++){
-            for(int j = 0; j < 8; j++){
-                board[i][j] = EMPTY;
-            }
-        }
+	bool whiteCastleKing = true;
+	bool whiteCastleQueen = true;
+	bool blackCastleKing = true;
+	bool blackCastleQueen = true;
 
-        for(int i = 0; i < 8; i++){
-            board[6][i] = WHITE_PAWN;
-        }
-        board[7][0]=WHITE_ROOK;
-        board[7][1]=WHITE_KNIGHT;
-        board[7][2]=WHITE_BISHOP;
-        board[7][3]=WHITE_QUEEN;
-        board[7][4]=WHITE_KING;
-        board[7][5]=WHITE_BISHOP;
-        board[7][6]=WHITE_KNIGHT;
-        board[7][7]=WHITE_ROOK;
-    }
+	Position lastPawnMoved2{-1, -1};
 
-    explicit BoardState(const BoardState *reference){
-        for (int i = 0; i < 8; i++) {
-            for (int j = 0; j < 8; j++) {
-                this->board[i][j] = reference->board[i][j];
-            }
-        }
-    }
+	int lastPawnMoveOrCapture = 0;
 
-    void move(const int startRank, const int startFile, const int targetRank, const int targetFile) {
-        board[targetRank][targetFile] = board[startRank][startFile];
-        board[startRank][startFile] = EMPTY;
-    }
+	bool playerTurn = false; // false = white, true = black
 
-    void ChangeState(const int i, const int j, const SquareState state) {
-        if (i < 0 or i > 7 or j < 0 or j > 7) {
-            std::cout << "Invalid position in BoardState.ChangeState()" << std::endl;
-        }
-        this->board[i][j] = state;
-    }
+	//cache
+	Position whiteKing;
+	Position blackKing;
 
-    [[nodiscard]] SquareState GetState(const int i, const int j) const {
-        return this->board[i][j];
-    }
+	float whiteMg = 0.0f;
+	float whiteEg = 0.0f;
+	float blackMg = 0.0f;
+	float blackEg = 0.0f;
+	int evalPhase = 0;
 
+	uint64_t hash{};
+
+	bool operator == (const BoardState& other) const {
+		return board == other.board &&
+			whiteCastleKing  == other.whiteCastleKing &&
+			whiteCastleQueen == other.whiteCastleQueen &&
+			blackCastleKing  == other.blackCastleKing &&
+			blackCastleQueen == other.blackCastleQueen &&
+			lastPawnMoved2   == other.lastPawnMoved2 &&
+			playerTurn       == other.playerTurn;
+	}
 };
 
 #endif //BOARDSTATE_H
