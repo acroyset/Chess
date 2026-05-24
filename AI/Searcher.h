@@ -91,7 +91,7 @@ struct PVTable {
     int  pvLength[MAX_DEPTH]{};
 
     void clear() {
-        for (int i = 0; i < MAX_DEPTH; i++) pvLength[i] = 0;
+        for (int & i : pvLength) i = 0;
     }
 
     void updatePV(int ply, const Move& move) {
@@ -552,7 +552,7 @@ private:
             bool isEndgame = phase <= 4;
 
             if (!isEndgame) {
-                int R = depth >= 6 ? 3 : 2;
+                int R = 3 + depth / 6;
                 board.makeNullMove();
                 float nullScore = -search(board, depth - 1 - R, -beta, -beta + 1.0f,
                                           ply + 1, killerMoves, history, pv);
@@ -589,18 +589,47 @@ private:
         Move  bestMove = moves[0];
         float bestEval = -SEARCH_INF;
 
+        // --- Futility pruning ---
+        // At low depths, if static eval is so far below alpha that even a large
+        // material swing can't save it, skip quiet moves entirely.
+        // Margins: depth 1 ~= minor piece (325), depth 2 ~= rook (500).
+        // Never prune when in check, near mate, or at the root (ply 0).
+        bool canFutilityPrune = false;
+        float futilityBase    = 0.0f;
+        constexpr float FUTILITY_MARGIN[3] = { 0.0f, 3.25f, 5.00f }; // indexed by depth
+
+        if (!inCheck && depth <= 2 && ply > 0
+                && alpha < SEARCH_MATE_SCORE - 1000
+                && beta  < SEARCH_MATE_SCORE - 1000)
+        {
+            futilityBase     = evaluateBoard(board) + FUTILITY_MARGIN[depth];
+            canFutilityPrune = (futilityBase <= alpha);
+        }
+
         for (int i = 0; i < moves.count; i++) {
             Move move = moves[i];
             int  newDepth = depth - 1 + extension;
             float eval;
+
+            // Apply futility pruning: skip quiet, non-killer moves that can't raise alpha
+            if (canFutilityPrune
+                    && i > 0                       // never skip the first (TT/PV) move
+                    && !move.isCapture()
+                    && !move.isPromotion()
+                    && !(move == killerMoves[plyIndex][0])
+                    && !(move == killerMoves[plyIndex][1]))
+            {
+                continue;
+            }
 
             board.move(move);
 
             bool givesCheck = board.check(board.getPlayerTurn());
 
             // --- Late Move Reductions ---
+            // Reduce more aggressively: start at move 2 (not 3), divide by 2.0 (not 3.0)
             bool doLMR = (
-                i >= 3              &&
+                i >= 2              &&
                 depth >= 3          &&
                 !move.isCapture()   &&
                 !move.isPromotion() &&
@@ -609,7 +638,7 @@ private:
             );
 
             if (doLMR) {
-                int reduction = 1 + int(std::log(float(depth)) * std::log(float(i)) / 3.0f);
+                int reduction = 1 + int(std::log(float(depth)) * std::log(float(i)) / 2.0f);
                 reduction = std::min(reduction, depth - 2);
 
                 eval = -search(board, newDepth - reduction, -alpha - 1.0f, -alpha,
