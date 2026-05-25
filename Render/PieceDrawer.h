@@ -55,9 +55,9 @@ public:
 
     void drawPiece(sf::RenderWindow& window, Piece piece, Position position, bool highlighted, bool blackAtBottom) {
 
-        bool lightSquare = position.rank()%2 == 0 xor position.file()%2 == 0;
         int displayFile = blackAtBottom ? 7 - position.file() : position.file();
         int displayRank = blackAtBottom ? position.rank() : 7 - position.rank();
+        bool lightSquare = isLightSquare(displayRank, displayFile);
 
         if (lightSquare) {
             background.setFillColor(highlighted ? whiteHighlighted : white);
@@ -80,30 +80,32 @@ public:
             window.draw(pieceMarker);
         }
 
-        drawCoordinates(window, position, lightSquare, blackAtBottom);
+        drawCoordinates(window, displayRank, displayFile, lightSquare, blackAtBottom);
     }
 
     private:
 
-    void drawCoordinates(sf::RenderWindow& window, Position position, bool lightSquare, bool blackAtBottom) {
+    static bool isLightSquare(int displayRank, int displayFile) {
+        return (displayRank + displayFile) % 2 == 0;
+    }
+
+    void drawCoordinates(sf::RenderWindow& window, int displayRank, int displayFile, bool lightSquare, bool blackAtBottom) {
         if (!fontLoaded) return;
 
         coordinateText.setFillColor(lightSquare ? green : white);
 
-        int displayFile = blackAtBottom ? 7 - position.file() : position.file();
-        int displayRank = blackAtBottom ? position.rank() : 7 - position.rank();
         float x = float(displayFile) * tileSize;
         float y = float(displayRank) * tileSize;
         float margin = tileSize * 0.05f;
 
         if (displayFile == 0) {
-            coordinateText.setString(std::to_string(position.rank() + 1));
+            coordinateText.setString(blackAtBottom ? std::to_string(displayRank + 1) : std::to_string(8 - displayRank));
             coordinateText.setPosition({x + margin, y + margin * 0.5f});
             window.draw(coordinateText);
         }
 
         if (displayRank == 7) {
-            coordinateText.setString(std::string(1, char('a' + position.file())));
+            coordinateText.setString(std::string(1, blackAtBottom ? char('h' - displayFile) : char('a' + displayFile)));
             coordinateText.setPosition({x + tileSize - margin * 3.0f, y + tileSize - margin * 4.0f});
             window.draw(coordinateText);
         }

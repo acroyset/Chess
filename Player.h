@@ -7,12 +7,14 @@
 #include "Board.h"
 
 class Player {
+	bool timed;
     float timeRemaining = 0.0f;
 	float increment = 0.0f;
 
 public:
     explicit Player(float startingTime, float increment)
-        : timeRemaining(startingTime), increment(increment) {}
+        : timeRemaining(startingTime), increment(increment) {timed = true;}
+	Player() {timed = false;}
 
 	virtual ~Player() = default;
 
@@ -20,6 +22,8 @@ public:
 		Board& board,
 		sf::RenderWindow& window
 	) = 0;
+
+	virtual void resetInput() {}
 
 	void tickClock(float deltaTime) {
 		timeRemaining = std::max(0.0f, timeRemaining - deltaTime);
@@ -32,7 +36,7 @@ public:
 		return increment;
 	}
 	[[nodiscard]] bool outOfTime() const {
-		return timeRemaining <= 0.0f;
+		return timed && timeRemaining <= 0.0f;
 	}
 	void incrementTime() {
 		timeRemaining += increment;
@@ -40,6 +44,10 @@ public:
 
 	[[nodiscard]] virtual MoveList getShownMoves() const {
 		return {};
+	}
+
+	[[nodiscard]] bool isTimed() const {
+		return timed;
 	}
 };
 

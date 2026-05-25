@@ -148,7 +148,7 @@ inline int see(const Board& board, Move move) {
     }
     occ &= ~(1ULL << fromIdx); // remove the moving piece
 
-    bool sideToMove = !(attacker >> 3); // false=white just moved, so next attacker is black
+    bool sideToMove = (attacker >> 3) != 0; // toggled below so the opponent recaptures first
 
     // Diagonal attackers: bishops + queens
     constexpr int diagDirs[4][2] = {{1,1},{1,-1},{-1,1},{-1,-1}};
@@ -517,7 +517,7 @@ private:
             return searchCaptures(board, alpha, beta, ply, killerMoves, history);
         }
 
-        if (board.draw50Move() || board.drawRepetition()) {
+        if (board.draw50Move() || board.repetition()) {
             return 0.0f;
         }
 
@@ -723,7 +723,7 @@ private:
             return evaluateBoard(board);
         }
 
-        if (board.draw50Move() || board.drawRepetition()) {
+        if (board.draw50Move() || board.repetition()) {
             return 0.0f;
         }
 

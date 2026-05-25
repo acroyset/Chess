@@ -348,6 +348,16 @@ public:
         }
         return false;
     }
+    [[nodiscard]] bool repetition() const {
+        uint64_t current = state.hash;
+
+        // Check stack (search history)
+        for (int i = stackTop - 1; i >= 0; i--) {
+            if (stateStack[i].hash == current) return true;
+        }
+        // Check root history (game history before search started)
+        return std::any_of(rootHashes.begin(), rootHashes.end(), [current](const uint64_t& h){return h == current;});
+    }
 
     bool move(const Move& move) {
 
@@ -602,6 +612,9 @@ public:
     }
     [[nodiscard]] uint64_t getHash() const {
         return state.hash;
+    }
+    [[nodiscard]] bool isSquareAttacked(Position square, bool byBlack) const {
+        return squareAttacked(square, byBlack);
     }
 
     [[nodiscard]] uint64_t computePolyglotHash() const {

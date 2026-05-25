@@ -19,8 +19,12 @@ public:
         : Player(startingTime, increment), tileSize(tileSize) {
         selectedPosition.setNone();
     }
+    explicit HumanPlayer(float tileSize)
+        : tileSize(tileSize) {
+        selectedPosition.setNone();
+    }
 
-    void resetInput() {
+    void resetInput() override {
         pressedLast = false;
         selectedPosition.setNone();
         validMoves.clear();

@@ -131,7 +131,11 @@ class uiDrawer {
     bool pieceTextureLoaded = false;
     float whiteTime = 0.0f;
     float blackTime = 0.0f;
+    bool whiteTimed = false;
+    bool blackTimed = false;
     bool blackAtBottom = false;
+    bool canUndoMove = false;
+    bool analyticsMode = false;
 
     sf::Color panelColor{22, 24, 27};
     sf::Color sectionColor{31, 34, 38};
@@ -169,37 +173,56 @@ public:
     }
 
     void draw(sf::RenderWindow& window, const Board& board, float deltaTime) {
-        float currentEval = evaluateBoard(board);
-        if (board.getPlayerTurn()) {
-            currentEval = -currentEval;
-        }
-        bool currentMate = false;
-        int evalDepth = 0;
+        window.draw(sidePanel);
+        drawGameSection(window);
 
-        if (evalSearcher != nullptr) {
-            SearchResult search = evalSearcher->getResult();
+        if (analyticsMode) {
+            float currentEval = evaluateBoard(board);
+            if (board.getPlayerTurn()) {
+                currentEval = -currentEval;
+            }
+            bool currentMate = false;
+            int evalDepth = 0;
 
-            if (search.bestMove.has_value()) {
-                currentEval = search.eval;
-                currentMate = search.mate;
-                evalDepth = search.depth;
+            if (evalSearcher != nullptr) {
+                SearchResult search = evalSearcher->getResult();
 
-                if (board.getPlayerTurn()) {
-                    currentEval = -currentEval;
+                if (search.bestMove.has_value()) {
+                    currentEval = search.eval;
+                    currentMate = search.mate;
+                    evalDepth = search.depth;
+
+                    if (board.getPlayerTurn()) {
+                        currentEval = -currentEval;
+                    }
                 }
             }
+
+            drawBoardEvalBar(window, currentEval, currentMate, deltaTime);
+            drawEvalSection(window, currentEval, currentMate, evalDepth);
         }
 
-        window.draw(sidePanel);
-        drawBoardEvalBar(window, currentEval, currentMate, deltaTime);
-        drawGameSection(window);
-        drawEvalSection(window, currentEval, currentMate, evalDepth);
         drawMaterialSection(window, board);
-        drawAiSection(window);
+        if (analyticsMode) {
+            drawAiSection(window);
+        }
         drawMoveHistory(window);
     }
 
-    void update(Board& board, float deltaTime, const std::vector<MoveRecord>& moveHistory, Player* player, const Player* whitePlayer, const Player* blackPlayer, bool whiteFlagged, bool blackFlagged, bool blackAtBottom) {
+    void setAnalyticsMode(bool enabled) {
+        analyticsMode = enabled;
+    }
+
+    bool analyticsButtonContains(sf::Vector2i point) const {
+        return analyticsButtonBounds().contains(sf::Vector2f(float(point.x), float(point.y)));
+    }
+
+    bool undoButtonContains(sf::Vector2i point) const {
+        if (!analyticsMode) return false;
+        return undoButtonBounds().contains(sf::Vector2f(float(point.x), float(point.y)));
+    }
+
+    void update(Board& board, float deltaTime, const std::vector<MoveRecord>& moveHistory, Player* player, const Player* whitePlayer, const Player* blackPlayer, bool whiteFlagged, bool blackFlagged, bool blackAtBottom, bool analyticsMode) {
         bool whiteCheck = board.check(false);
         bool blackCheck = board.check(true);
         bool checkmate = board.checkMate();
@@ -257,7 +280,11 @@ public:
         history = moveHistory;
         whiteTime = whitePlayer != nullptr ? whitePlayer->getTimeRemaining() : 0.0f;
         blackTime = blackPlayer != nullptr ? blackPlayer->getTimeRemaining() : 0.0f;
+        whiteTimed = whitePlayer != nullptr && whitePlayer->isTimed();
+        blackTimed = blackPlayer != nullptr && blackPlayer->isTimed();
         this->blackAtBottom = blackAtBottom;
+        this->analyticsMode = analyticsMode;
+        canUndoMove = !moveHistory.empty();
     }
 
 private:
@@ -326,16 +353,61 @@ private:
         window.draw(corner);
     }
 
+    static void drawBottomRoundedRect(sf::RenderWindow& window, sf::Vector2f position, sf::Vector2f size, float radius, sf::Color color) {
+        if (size.x <= 0.0f || size.y <= 0.0f) return;
+
+        radius = std::max(0.0f, std::min(radius, std::min(size.x, size.y) * 0.5f));
+
+        sf::RectangleShape body({size.x, std::max(0.0f, size.y - radius)});
+        body.setPosition(position);
+        body.setFillColor(color);
+        window.draw(body);
+
+        if (radius <= 0.0f) return;
+
+        sf::RectangleShape bottomCenter({size.x - radius * 2.0f, radius});
+        bottomCenter.setPosition({position.x + radius, position.y + size.y - radius});
+        bottomCenter.setFillColor(color);
+        window.draw(bottomCenter);
+
+        sf::CircleShape corner(radius, 32);
+        corner.setFillColor(color);
+
+        corner.setPosition({position.x, position.y + size.y - radius * 2.0f});
+        window.draw(corner);
+
+        corner.setPosition({position.x + size.x - radius * 2.0f, position.y + size.y - radius * 2.0f});
+        window.draw(corner);
+    }
+
     float evalRailX() const {
         return panelX + 10.0f;
     }
 
     float sectionX() const {
-        return panelX + evalRailW + 30.0f;
+        return analyticsMode ? panelX + evalRailW + 30.0f : panelX + 18.0f;
     }
 
     float sectionW() const {
-        return panelW - evalRailW - 44.0f;
+        return analyticsMode ? panelW - evalRailW - 44.0f : panelW - 36.0f;
+    }
+
+    sf::FloatRect analyticsButtonBounds() const {
+        constexpr float buttonW = 132.0f;
+        constexpr float buttonH = 28.0f;
+        float x = sectionX() + sectionW() - pad - buttonW;
+        float y = 28.0f;
+
+        return {{x, y}, {buttonW, buttonH}};
+    }
+
+    sf::FloatRect undoButtonBounds() const {
+        constexpr float buttonW = 112.0f;
+        constexpr float buttonH = 30.0f;
+        float x = sectionX() + sectionW() - pad - buttonW;
+        float y = 68.0f;
+
+        return {{x, y}, {buttonW, buttonH}};
     }
 
     void drawSection(sf::RenderWindow& window, float y, float h) {
@@ -356,9 +428,14 @@ private:
 
         drawSection(window, y, h);
         drawText(window, "GAME", 13, x, y + 14.0f, mutedText, true);
-        drawText(window, "FPS " + std::to_string(fps), 13, sectionX() + sectionW() - 114.0f, y + 14.0f, mutedText);
+        drawText(window, "FPS " + std::to_string(fps), 13, x + 58.0f, y + 14.0f, mutedText);
         drawText(window, turnText, 25, x, y + 36.0f, primaryText, true);
         drawText(window, statusText, 16, x, y + 68.0f, statusColor);
+        drawButton(window, analyticsButtonBounds(), analyticsMode ? "Analytics On" : "Analytics Off", true, analyticsMode);
+
+        if (analyticsMode) {
+            drawButton(window, undoButtonBounds(), "Undo Move", canUndoMove);
+        }
     }
 
     void drawEvalSection(sf::RenderWindow& window, float eval, bool mate, int depth) {
@@ -374,7 +451,7 @@ private:
     }
 
     void drawMaterialSection(sf::RenderWindow& window, const Board& board) {
-        float y = 262.0f;
+        float y = analyticsMode ? 262.0f : 126.0f;
         float h = 154.0f;
         float x = sectionX() + pad;
         auto captures = buildCapturedCounts();
@@ -397,11 +474,11 @@ private:
         drawText(window, "MATERIAL", 13, x, y + 14.0f, mutedText, true);
         int materialDiff = whiteMaterial - blackMaterial;
         if (blackAtBottom) {
-            drawCapturedRow(window, "WHITE", whiteTime, captures, true, y + 38.0f, materialDiff > 0 ? materialDiff : 0);
-            drawCapturedRow(window, "BLACK", blackTime, captures, false, y + 92.0f, materialDiff < 0 ? -materialDiff : 0);
+            drawCapturedRow(window, "WHITE", whiteTime, whiteTimed, captures, true, y + 38.0f, materialDiff > 0 ? materialDiff : 0);
+            drawCapturedRow(window, "BLACK", blackTime, blackTimed, captures, false, y + 92.0f, materialDiff < 0 ? -materialDiff : 0);
         } else {
-            drawCapturedRow(window, "BLACK", blackTime, captures, false, y + 38.0f, materialDiff < 0 ? -materialDiff : 0);
-            drawCapturedRow(window, "WHITE", whiteTime, captures, true, y + 92.0f, materialDiff > 0 ? materialDiff : 0);
+            drawCapturedRow(window, "BLACK", blackTime, blackTimed, captures, false, y + 38.0f, materialDiff < 0 ? -materialDiff : 0);
+            drawCapturedRow(window, "WHITE", whiteTime, whiteTimed, captures, true, y + 92.0f, materialDiff > 0 ? materialDiff : 0);
         }
     }
 
@@ -439,8 +516,24 @@ private:
         drawText(window, value, 15, x + 126.0f, y, primaryText, true);
     }
 
+    void drawButton(sf::RenderWindow& window, sf::FloatRect bounds, const std::string& label, bool enabled, bool active = false) {
+        sf::Color border = enabled ? (active ? amber : sf::Color(77, 84, 91)) : sf::Color(43, 47, 52);
+        sf::Color fill = enabled ? (active ? sf::Color(68, 57, 34) : sf::Color(47, 52, 58)) : sf::Color(34, 37, 41);
+        sf::Color labelColor = enabled ? primaryText : sf::Color(104, 111, 118);
+
+        drawRoundedRect(window, bounds.position, bounds.size, 6.0f, border);
+        drawRoundedRect(
+            window,
+            {bounds.position.x + 1.0f, bounds.position.y + 1.0f},
+            {bounds.size.x - 2.0f, bounds.size.y - 2.0f},
+            5.0f,
+            fill
+        );
+        drawTextCentered(window, label, 14, bounds.position, bounds.size, labelColor, true);
+    }
+
     void drawMoveHistory(sf::RenderWindow& window) {
-        float y = 610.0f;
+        float y = analyticsMode ? 610.0f : 296.0f;
         float h = float(height) - y - 20.0f;
         float x = sectionX() + pad;
         float rowH = 22.0f;
@@ -496,7 +589,7 @@ private:
         return counts;
     }
 
-    void drawCapturedRow(sf::RenderWindow& window, const std::string& label, float playerTime, const std::array<int, 16>& captures, bool whiteCaptured, float y, int materialPlus) {
+    void drawCapturedRow(sf::RenderWindow& window, const std::string& label, float playerTime, bool playerTimed, const std::array<int, 16>& captures, bool whiteCaptured, float y, int materialPlus) {
         float x = sectionX() + pad;
         float rightX = sectionX() + sectionW() - pad;
         const std::array<Piece, 5> pieces = whiteCaptured
@@ -508,7 +601,9 @@ private:
         if (materialPlus > 0) {
             drawText(window, "+" + std::to_string(materialPlus), 16, x + 58.0f, y - 2.0f, primaryText, true);
         }
-        drawTextRight(window, formatClock(playerTime), 24, rightX, y - 8.0f, clockColor(playerTime), true);
+        if (playerTimed) {
+            drawTextRight(window, formatClock(playerTime), 24, rightX, y - 8.0f, clockColor(playerTime), true);
+        }
 
         float iconSize = 34.0f;
         float stackStep = 12.0f;
@@ -659,7 +754,7 @@ private:
         drawRoundedRect(window, {ix, iy}, {iw, ih}, iw * 0.5f, sf::Color(18, 19, 21));
 
         if (innerWhiteHeight > 1.0f) {
-            drawRoundedRect(window, {ix, iy + ih - innerWhiteHeight}, {iw, innerWhiteHeight}, iw * 0.5f, sf::Color(230, 230, 230));
+            drawBottomRoundedRect(window, {ix, iy + ih - innerWhiteHeight}, {iw, innerWhiteHeight}, iw * 0.5f, sf::Color(230, 230, 230));
         }
 
     }

@@ -6,6 +6,7 @@
 #define AIPLAYER_H
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 #include "../Player.h"
@@ -18,22 +19,26 @@ const float MATE_SCORE = 1000000.0f;
 class AIPlayer : public Player {
 	Searcher* searcher = nullptr;
 
-	int thinkingTime;
+	int thinkingTimeMs = 1000;
+
 	int maxDepth = 32;
 
 	SearchResult lastSearch{};
 
 	bool started = false;
 	std::chrono::time_point<std::chrono::steady_clock> endTime;
-	int currentMoveTime = 0;
 	bool currentSearchBlackToMove = false;
 	bool lastSearchBlackToMove = false;
 	bool lastMoveFromOpeningBook = false;
 
 public:
 
-	explicit AIPlayer(Searcher* searcher, int thinkingTime, float startingTime, float increment)
-		: Player(startingTime, increment), searcher(searcher), thinkingTime(thinkingTime) {}
+	explicit AIPlayer(Searcher* searcher, float startingTime, float increment)
+		: Player(startingTime, increment), searcher(searcher) {}
+	explicit AIPlayer(Searcher* searcher, float fixedThinkingSeconds)
+		: thinkingTimeMs(std::max(1, int(std::round(fixedThinkingSeconds * 1000.0f)))), searcher(searcher) {}
+	explicit AIPlayer(Searcher* searcher, double fixedThinkingSeconds)
+		: AIPlayer(searcher, float(fixedThinkingSeconds)) {}
 
 	std::optional<Move> selectMove(Board& board, sf::RenderWindow& window) override {
 
@@ -51,10 +56,10 @@ public:
 			}
 
 			lastMoveFromOpeningBook = false;
-			currentMoveTime = adaptiveThinkingTime();
+			thinkingTimeMs = adaptiveThinkingTime();
 			searcher->startSearch(board);
 
-			endTime = std::chrono::steady_clock::now() + std::chrono::milliseconds(currentMoveTime);
+			endTime = std::chrono::steady_clock::now() + std::chrono::milliseconds(thinkingTimeMs);
 
 			started = true;
 
@@ -73,6 +78,11 @@ public:
 		return lastSearch.bestMove;
 	}
 
+	void resetInput() override {
+		started = false;
+		lastMoveFromOpeningBook = false;
+	}
+
 	[[nodiscard]] SearchResult getLastSearch() const {
 		return lastSearch;
 	}
@@ -85,13 +95,16 @@ public:
 
 private:
 	[[nodiscard]] int adaptiveThinkingTime() const {
+
+		if (!isTimed()) return thinkingTimeMs;
+
 		float remainingMs = getTimeRemaining()*1000;
 
 		float safetyBuffer = 25;
 		float usableMs = std::max(1.0f, remainingMs - safetyBuffer);
 		float budget = usableMs*0.025f;
 
-		return int(budget + getIncrimentTime()*1000);
+		return std::max(1, int(budget + getIncrimentTime()*1000));
 	}
 };
 

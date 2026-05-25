@@ -65,14 +65,10 @@ int main() {
     MoveDrawer moveDrawer(tileSize);
 
     std::unique_ptr<Player> whitePlayer = std::make_unique<HumanPlayer>(tileSize, 15.0f * 60.0f, 10.0f);
-    std::unique_ptr<Player> blackPlayer = std::make_unique<AIPlayer>(&searcher, 1.0f, 10.0f * 60.0f, 10.0f);
+    std::unique_ptr<Player> blackPlayer = std::make_unique<AIPlayer>(&searcher, 10.0f * 60.0f, 10.0f);
 
 
-    bool whiteHuman = dynamic_cast<HumanPlayer*>(whitePlayer.get()) != nullptr;
-    bool blackHuman = dynamic_cast<HumanPlayer*>(blackPlayer.get()) != nullptr;
-    bool whiteAi = dynamic_cast<AIPlayer*>(whitePlayer.get()) != nullptr;
-    bool blackAi = dynamic_cast<AIPlayer*>(blackPlayer.get()) != nullptr;
-    bool blackAtBottom = blackHuman && whiteAi && !whiteHuman && !blackAi;
+    bool blackAtBottom = false;
 
     if (auto* humanPlayer = dynamic_cast<HumanPlayer*>(whitePlayer.get())) {
         humanPlayer->setBlackAtBottom(blackAtBottom);
@@ -83,9 +79,12 @@ int main() {
 
     std::vector<MoveRecord> moveHistory;
 
-    searcher.startSearch(board);
+    bool analyticsMode = true;
     sf::Clock clock;
     while (window.isOpen()) {
+        bool undoRequested = false;
+        bool toggleAnalyticsRequested = false;
+
         while (const std::optional event = window.pollEvent()) {
             if (event->is<sf::Event::Closed>()) {
                 window.close();
@@ -94,10 +93,40 @@ int main() {
                 if (keyPressed->code == sf::Keyboard::Key::Escape) {
                     window.close();
                 }
+                if (keyPressed->code == sf::Keyboard::Key::A) {
+                    toggleAnalyticsRequested = true;
+                }
+            }
+            if (const auto* mousePressed = event->getIf<sf::Event::MouseButtonPressed>()) {
+                if (mousePressed->button == sf::Mouse::Button::Left) {
+                    if (renderer.analyticsButtonContains(mousePressed->position)) {
+                        toggleAnalyticsRequested = true;
+                    }
+                    else if (renderer.undoButtonContains(mousePressed->position)) {
+                        undoRequested = true;
+                    }
+                }
             }
         }
 
         float deltaTime = clock.restart().asSeconds();
+
+        if (toggleAnalyticsRequested) {
+            analyticsMode = !analyticsMode;
+            renderer.setAnalyticsMode(analyticsMode);
+        }
+
+        bool skipMoveSelection = false;
+        if (analyticsMode && undoRequested && !moveHistory.empty()) {
+            board.undoMove();
+            moveHistory.pop_back();
+            whitePlayer->resetInput();
+            blackPlayer->resetInput();
+            skipMoveSelection = true;
+
+            searcher.endSearch();
+            searcher.startSearch(board);
+        }
 
         window.clear();
 
@@ -115,10 +144,10 @@ int main() {
         bool timeOut = whiteFlagged || blackFlagged;
         endGame = endGame || timeOut;
 
-        renderer.update(board, deltaTime, moveHistory, currentPlayer, whitePlayer.get(), blackPlayer.get(), whiteFlagged, blackFlagged, blackAtBottom);
+        renderer.update(board, deltaTime, moveHistory, currentPlayer, whitePlayer.get(), blackPlayer.get(), whiteFlagged, blackFlagged, blackAtBottom, analyticsMode);
 
 	    std::optional<Move> chosenMove = std::nullopt;
-        if (!endGame && window.hasFocus()) {
+        if (!endGame && window.hasFocus() && !skipMoveSelection) {
             chosenMove = currentPlayer->selectMove(board, window);
         }
         else if (auto* humanPlayer = dynamic_cast<HumanPlayer*>(currentPlayer)) {
