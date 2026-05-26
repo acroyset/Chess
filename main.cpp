@@ -7,6 +7,7 @@
 #include "Render/PieceDrawer.h"
 #include "Player.h"
 #include "Render/uiDrawer.h"
+#include "FenSaveLoader.h"
 
 std::optional<Move> normalizeMove(Board& board, Move move) {
     MoveList legalMoves;
@@ -64,8 +65,8 @@ int main() {
     PieceDrawer pieceDrawer(tileSize);
     MoveDrawer moveDrawer(tileSize);
 
-    std::unique_ptr<Player> whitePlayer = std::make_unique<HumanPlayer>(tileSize, 15.0f * 60.0f, 10.0f);
-    std::unique_ptr<Player> blackPlayer = std::make_unique<AIPlayer>(&searcher, 10.0f * 60.0f, 10.0f);
+    std::unique_ptr<Player> whitePlayer = std::make_unique<AIPlayer>(&searcher, 10.0f);
+    std::unique_ptr<Player> blackPlayer = std::make_unique<AIPlayer>(&searcher, 10.0f);
 
 
     bool blackAtBottom = false;
@@ -96,6 +97,41 @@ int main() {
                 if (keyPressed->code == sf::Keyboard::Key::A) {
                     toggleAnalyticsRequested = true;
                 }
+
+                // F = paste FEN from clipboard and load
+                if (keyPressed->code == sf::Keyboard::Key::F) {
+                    std::string fen = pasteFromClipboard();
+                    if (!fen.empty() && fen.find('/') != std::string::npos) {
+                        try {
+                            Board newBoard(fen);
+                            board = newBoard;
+                            moveHistory.clear();
+                            auto fenCaptures = inferCapturedFromFEN(board);
+                            renderer.setFenCaptures(fenCaptures);
+                            whitePlayer->resetInput();
+                            blackPlayer->resetInput();
+                            searcher.endSearch();
+                            searcher.startSearch(board);
+                            std::cerr << "FEN loaded OK\n";
+                        } catch (...) {
+                            std::cerr << "Invalid FEN\n";
+                        }
+                    }
+                }
+
+                // C = copy current FEN to clipboard
+                if (keyPressed->code == sf::Keyboard::Key::C) {
+                    std::string fen = boardToFEN(board);
+                    copyToClipboard(fen);
+                    std::cerr << "FEN: " << fen << "\n";
+                }
+
+                // P = copy PGN to clipboard
+                if (keyPressed->code == sf::Keyboard::Key::P) {
+                    copyToClipboard(exportPGN(moveHistory));
+                    std::cerr << "PGN copied\n";
+                }
+
             }
             if (const auto* mousePressed = event->getIf<sf::Event::MouseButtonPressed>()) {
                 if (mousePressed->button == sf::Mouse::Button::Left) {

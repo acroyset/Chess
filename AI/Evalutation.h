@@ -504,34 +504,34 @@ inline float evalKingAttackCached(
             int nr = r + o[0], nf = f + o[1];
             if (squareInMask(nr, nf, zone)) attacks++;
         }
-        addAttacks(attacks, 2, 0.12f);
+        addAttacks(attacks, 2, 0.08f);
     }
 
     // Bishops
     for (int i = 0; i < attacker.bishops; i++) {
         int raw = countSlidingKingZoneAttacks(board, attacker.bishopSquares[i], attackerBlack, bishopDirections, zone);
-        addAttacks(raw, 2, 0.10f);
+        addAttacks(raw, 2, 0.07f);
     }
 
     // Rooks
     for (int i = 0; i < attacker.rookCount; i++) {
         int raw = countSlidingKingZoneAttacks(board, attacker.rooks[i], attackerBlack, rookDirections, zone);
-        addAttacks(raw, 3, 0.15f);
+        addAttacks(raw, 3, 0.12f);
     }
 
     // Queens
     for (int i = 0; i < attacker.queenCount; i++) {
         int raw = countSlidingKingZoneAttacks(board, attacker.queens[i], attackerBlack, queenDirections, zone);
-        addAttacks(raw, 4, 0.10f);
+        addAttacks(raw, 4, 0.08f);
     }
 
     // Coordination bonus
     if (attackingPieces >= 2)
-        score += 0.022f * float(attackingPieces - 1) * float(attackUnits);
+        score += 0.015f * float(attackingPieces - 1) * float(attackUnits);
 
     // Queen amplifier
     if (attacker.queenCount > 0 && attackingPieces >= 2)
-        score += 0.10f;
+        score += 0.06f;
 
     // Gate: minor-only attacks without heavy backup are rarely decisive
     bool hasHeavyAttacker = attacker.queenCount > 0 || attacker.rookCount >= 2;
@@ -562,9 +562,9 @@ inline float evalKingAttackCached(
         }
 
         if (!defenderPawn && !attackerPawn)
-            score += attackerHasSlider ? 0.14f : 0.04f;
+            score += attackerHasSlider ? 0.10f : 0.04f;
         else if (!defenderPawn)
-            score += attackerHasSlider ? 0.08f : 0.02f;
+            score += attackerHasSlider ? 0.06f : 0.02f;
 
         if (!shelterPawn)
             score += (df == 0) ? 0.09f : 0.05f;
@@ -639,7 +639,7 @@ inline float evalPawnStructureCached(const EvalSideData& side, const EvalSideDat
                 0.52f, 0.90f, 1.60f, 0.0f
             };
             float bonus = passedBonus[advanceRank];
-            bonus *= 1.0f + 2.5f * endgameT;
+            bonus *= 1.0f + 1.8f * endgameT;
             score += bonus;
 
             if (advanceRank >= 5)
@@ -1091,7 +1091,7 @@ inline float evalPieceSafetyCached(const Board& board, const EvalSideData& side,
 
     // --- Piece safety ---
     {
-        float safetyWeight = 0.40f + 0.60f * endgameT;
+        float safetyWeight = 0.25f + 0.40f * endgameT;
         whiteScore += evalPieceSafetyCached(board, white, false, endgameT) * safetyWeight;
         blackScore += evalPieceSafetyCached(board, black, true,  endgameT) * safetyWeight;
     }

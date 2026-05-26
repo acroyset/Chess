@@ -466,10 +466,11 @@ private:
 
                 // Aspiration window management
                 if (currentBestEval <= searchAlpha || currentBestEval >= searchBeta) {
+                    // Already at full window — nothing left to try
                     if (searchAlpha <= -SEARCH_INF && searchBeta >= SEARCH_INF) {
                         break;
                     }
-
+                    // Open window fully; if it's a mate skip narrowing next iter
                     alpha = -SEARCH_INF;
                     beta  =  SEARCH_INF;
                 } else {
@@ -520,6 +521,12 @@ private:
         if (board.draw50Move() || board.repetition()) {
             return 0.0f;
         }
+
+        float mateAlpha = -SEARCH_MATE_SCORE + float(ply);
+        float mateBeta  =  SEARCH_MATE_SCORE - float(ply + 1);
+        if (mateAlpha > alpha) alpha = mateAlpha;
+        if (mateBeta  < beta)  beta  = mateBeta;
+        if (alpha >= beta)     return alpha;
 
         float originalAlpha = alpha;
         float originalBeta  = beta;
@@ -576,7 +583,7 @@ private:
         }
 
         // Check extension
-        int extension = inCheck ? 1 : 0;
+
         int plyIndex  = std::min(ply, MAX_DEPTH - 1);
 
         // Priority for ordering: TT move > PV move > killers > history
@@ -596,7 +603,7 @@ private:
         // Never prune when in check, near mate, or at the root (ply 0).
         bool canFutilityPrune = false;
         float futilityBase    = 0.0f;
-        constexpr float FUTILITY_MARGIN[3] = { 0.0f, 3.25f, 5.00f }; // indexed by depth
+        constexpr float FUTILITY_MARGIN[3] = { 0.0f, 2.00f, 3.50f };
 
         if (!inCheck && depth <= 2 && ply > 0
                 && alpha < SEARCH_MATE_SCORE - 1000
@@ -608,7 +615,7 @@ private:
 
         for (int i = 0; i < moves.count; i++) {
             Move move = moves[i];
-            int  newDepth = depth - 1 + extension;
+
             float eval;
 
             // Apply futility pruning: skip quiet, non-killer moves that can't raise alpha
@@ -624,7 +631,9 @@ private:
 
             board.move(move);
 
-            bool givesCheck = board.check(board.getPlayerTurn());
+            bool givesCheck     = board.check(board.getPlayerTurn());
+            int  moveExtension  = (inCheck || givesCheck) ? 1 : 0;
+            int  newDepth       = depth - 1 + moveExtension;
 
             // --- Late Move Reductions ---
             // Reduce more aggressively: start at move 2 (not 3), divide by 2.0 (not 3.0)

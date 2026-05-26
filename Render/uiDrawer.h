@@ -145,6 +145,8 @@ class uiDrawer {
     sf::Color warningRed{221, 82, 76};
     sf::Color amber{220, 168, 72};
 
+    std::array<int, 16> fenCaptures{};
+
 public:
 
     uiDrawer(int width, int height, Searcher& evalSearcher)
@@ -286,6 +288,8 @@ public:
         this->analyticsMode = analyticsMode;
         canUndoMove = !moveHistory.empty();
     }
+
+    void setFenCaptures(const std::array<int, 16>& c) { fenCaptures = c; }
 
 private:
     
@@ -578,14 +582,12 @@ private:
     }
 
     std::array<int, 16> buildCapturedCounts() const {
-        std::array<int, 16> counts{};
-
+        std::array<int, 16> counts = fenCaptures;
         for (const MoveRecord& record : history) {
             if (record.capturedPiece != EMPTY) {
                 counts[record.capturedPiece]++;
             }
         }
-
         return counts;
     }
 
@@ -759,7 +761,7 @@ private:
 
     }
 
-    std::string formatEval(float eval, bool mate) const {
+    static std::string formatEval(float eval, bool mate) {
         std::ostringstream ss;
         if (mate) {
             ss << 'M' << int(std::abs(eval));
