@@ -13,10 +13,11 @@
 class MoveDrawer {
     sf::CircleShape moveMarker;
     float tileSize;
+    float boardX;
 
 public:
 
-    explicit MoveDrawer(float tileSize) : tileSize(tileSize) {
+    explicit MoveDrawer(float tileSize, float boardX = 0.0f) : tileSize(tileSize), boardX(boardX) {
         moveMarker = sf::CircleShape(0.0001f, 64);
         moveMarker.setFillColor(sf::Color::Transparent);
         moveMarker.setOutlineColor(sf::Color(0, 0, 0, 100));
@@ -30,12 +31,12 @@ public:
         if (move.isCapture()) {
             moveMarker.setRadius(tileSize/2.5f);
             moveMarker.setOutlineThickness(10);
-            moveMarker.setPosition({float(displayFile)*tileSize+10, float(displayRank)*tileSize+10});
+            moveMarker.setPosition({boardX + float(displayFile)*tileSize+10, float(displayRank)*tileSize+10});
             window.draw(moveMarker);
         } else {
             moveMarker.setRadius(0.00001);
             moveMarker.setOutlineThickness(18);
-            moveMarker.setPosition({(float(displayFile)+0.5f)*tileSize, (float(displayRank)+0.5f)*tileSize});
+            moveMarker.setPosition({boardX + (float(displayFile)+0.5f)*tileSize, (float(displayRank)+0.5f)*tileSize});
             window.draw(moveMarker);
         }
     }

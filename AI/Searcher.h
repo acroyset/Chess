@@ -24,30 +24,6 @@ constexpr float SEARCH_INF        = 1000000000.0f;
 constexpr float SEARCH_MATE_SCORE = 1000000.0f;
 constexpr int   MAX_DEPTH         = 64;
 
-// SEE piece values (centipawns-ish, integers for speed)
-constexpr int SEE_VAL[16] = {
-    0,    // EMPTY
-    100,  // WHITE_PAWN
-    320,  // WHITE_KNIGHT
-    330,  // WHITE_BISHOP
-    500,  // WHITE_ROOK
-    900,  // WHITE_QUEEN
-    20000,// WHITE_KING
-    0, 0, // unused
-    100,  // BLACK_PAWN
-    320,  // BLACK_KNIGHT
-    330,  // BLACK_BISHOP
-    500,  // BLACK_ROOK
-    900,  // BLACK_QUEEN
-    20000,// BLACK_KING
-    0
-};
-
-inline int seeValue(Piece piece) {
-    int idx = int(piece);
-    return idx >= 0 && idx < 16 ? SEE_VAL[idx] : 0;
-}
-
 inline float scoreToTT(float score, int ply) {
     if (score > SEARCH_MATE_SCORE - 1000)  return score + float(ply);
     if (score < -SEARCH_MATE_SCORE + 1000) return score - float(ply);
@@ -113,175 +89,6 @@ struct PVTable {
         return ply < MAX_DEPTH && pvLength[ply] > ply;
     }
 };
-
-// -----------------------------------------------------------------------
-// Static Exchange Evaluation
-// Returns estimated material gain/loss for a capture on 'toSq'.
-// Positive = winning capture, negative = losing capture.
-// -----------------------------------------------------------------------
-inline int see(const Board& board, Move move) {
-    // Only meaningful for captures
-    if (!move.isCapture()) return 0;
-
-    int toIdx   = move.target().index;
-    int fromIdx = move.starting().index;
-
-    Piece victim   = board.getPiece(move.target());
-    Piece attacker = board.getPiece(move.starting());
-
-    if (attacker == EMPTY) return 0;
-
-    if (victim == EMPTY) {
-        if (!move.isEnPassant()) return 0;
-        victim = (attacker == WHITE_PAWN) ? BLACK_PAWN : WHITE_PAWN;
-    }
-
-    int gain[32];
-    int d = 0;
-    gain[d] = seeValue(victim);
-
-    // Build an occupancy mask — iterate piece bits
-    uint64_t occ = 0;
-    for (int p = 1; p <= 14; p++) {
-        if (p == 7 || p == 8) continue;
-        occ |= board.getPieceBits(static_cast<Piece>(p));
-    }
-    occ &= ~(1ULL << fromIdx); // remove the moving piece
-
-    bool sideToMove = (attacker >> 3) != 0; // toggled below so the opponent recaptures first
-
-    // Diagonal attackers: bishops + queens
-    constexpr int diagDirs[4][2] = {{1,1},{1,-1},{-1,1},{-1,-1}};
-    // Straight attackers: rooks + queens
-    constexpr int straightDirs[4][2] = {{1,0},{-1,0},{0,1},{0,-1}};
-
-    auto leastValuableAttacker = [&](bool black) -> std::pair<int,int> {
-        // Returns {seeValue, squareIndex} of LVA, or {-1,-1} if none
-        int bestVal = INT_MAX;
-        int bestSq  = -1;
-
-        int toRank = toIdx >> 3;
-        int toFile = toIdx & 7;
-
-        // Pawns
-        {
-            Piece pawn = black ? BLACK_PAWN : WHITE_PAWN;
-            int dr = black ? -1 : 1; // direction from pawn to capture square
-            for (int df : {-1, 1}) {
-                int r = toRank + dr;
-                int f = toFile + df;
-                if (r < 0 || r >= 8 || f < 0 || f >= 8) continue;
-                int sq = r * 8 + f;
-                if ((occ >> sq & 1) && board.getPiece(Position(uint8_t(sq))) == pawn) {
-                    int value = seeValue(pawn);
-                    if (value < bestVal) { bestVal = value; bestSq = sq; }
-                }
-            }
-        }
-
-        // Knights
-        {
-            Piece knight = black ? BLACK_KNIGHT : WHITE_KNIGHT;
-            for (auto& o : knightOffsets) {
-                int r = toRank + o[0];
-                int f = toFile + o[1];
-                if (r < 0 || r >= 8 || f < 0 || f >= 8) continue;
-                int sq = r * 8 + f;
-                if ((occ >> sq & 1) && board.getPiece(Position(uint8_t(sq))) == knight) {
-                    int value = seeValue(knight);
-                    if (value < bestVal) { bestVal = value; bestSq = sq; }
-                }
-            }
-        }
-
-        // Bishops / Queens (diagonal)
-        {
-            Piece bishop = black ? BLACK_BISHOP : WHITE_BISHOP;
-            Piece queen  = black ? BLACK_QUEEN  : WHITE_QUEEN;
-            for (auto& dd : diagDirs) {
-                int r = toRank, f = toFile;
-                for (int step = 1; step < 8; step++) {
-                    r += dd[0]; f += dd[1];
-                    if (r < 0 || r >= 8 || f < 0 || f >= 8) break;
-                    int sq = r * 8 + f;
-                    if (!(occ >> sq & 1)) continue;
-                    Piece p = board.getPiece(Position(uint8_t(sq)));
-                    if (p == bishop || p == queen) {
-                        int value = seeValue(p);
-                        if (value < bestVal) { bestVal = value; bestSq = sq; }
-                    }
-                    break;
-                }
-            }
-        }
-
-        // Rooks / Queens (straight)
-        {
-            Piece rook  = black ? BLACK_ROOK  : WHITE_ROOK;
-            Piece queen = black ? BLACK_QUEEN : WHITE_QUEEN;
-            for (auto& sd : straightDirs) {
-                int r = toRank, f = toFile;
-                for (int step = 1; step < 8; step++) {
-                    r += sd[0]; f += sd[1];
-                    if (r < 0 || r >= 8 || f < 0 || f >= 8) break;
-                    int sq = r * 8 + f;
-                    if (!(occ >> sq & 1)) continue;
-                    Piece p = board.getPiece(Position(uint8_t(sq)));
-                    if (p == rook || p == queen) {
-                        int value = seeValue(p);
-                        if (value < bestVal) { bestVal = value; bestSq = sq; }
-                    }
-                    break;
-                }
-            }
-        }
-
-        // King
-        {
-            Piece king = black ? BLACK_KING : WHITE_KING;
-            for (auto& o : kingOffsets) {
-                int r = toRank + o[0];
-                int f = toFile + o[1];
-                if (r < 0 || r >= 8 || f < 0 || f >= 8) continue;
-                int sq = r * 8 + f;
-                if ((occ >> sq & 1) && board.getPiece(Position(uint8_t(sq))) == king) {
-                    int value = seeValue(king);
-                    if (value < bestVal) { bestVal = value; bestSq = sq; }
-                }
-            }
-        }
-
-        return {bestSq == -1 ? -1 : bestVal, bestSq};
-    };
-
-    // Simulate exchanges
-    Piece currentAttacker = attacker;
-    d = 0;
-    gain[d] = seeValue(victim);
-
-    while (true) {
-        if (d >= 31) break;
-        d++;
-        sideToMove = !sideToMove;
-        auto [lvaVal, lvaSq] = leastValuableAttacker(sideToMove);
-        if (lvaSq == -1) break;
-
-        // The capturing piece is now at lvaSq; remove it from occ
-        occ &= ~(1ULL << lvaSq);
-
-        // After capturing, the gain is "capture value of current piece" minus what opponent gets
-        gain[d] = seeValue(currentAttacker) - gain[d-1];
-        currentAttacker = board.getPiece(Position(uint8_t(lvaSq)));
-
-        if (std::max(-gain[d-1], gain[d]) < 0) break; // prune — both sides lose
-    }
-
-    // Negate back to get result from original side's perspective
-    while (--d > 0) {
-        gain[d-1] = -std::max(-gain[d-1], gain[d]);
-    }
-    return gain[0];
-}
 
 
 class Searcher {
@@ -367,6 +174,11 @@ private:
     };
 
     void runSearch() {
+        if (board.drawInsufficientMaterial()) {
+            finish();
+            return;
+        }
+
         MoveList moves;
         board.getValidMoves(moves);
 
@@ -416,6 +228,12 @@ private:
             // Clear PV for this iteration so stale lines don't bleed in
             td.pv.clear();
 
+            if (depth > 1) {
+                for (auto & a : td.history)
+                    for (int & b : a)
+                        b /= 2;
+            }
+
             float alpha, beta;
 
             if (firstDepth || depth < 4) {
@@ -448,7 +266,11 @@ private:
 
                     const Move& move = moves[i];
                     td.board.move(move);
-                    float eval = -search(td.board, depth - 1, -searchBeta, -localAlpha,
+
+                    bool givesCheck = td.board.check(td.board.getPlayerTurn());
+                    int rootDepth = depth - 1 + (givesCheck ? 1 : 0);
+
+                    float eval = -search(td.board, rootDepth, -searchBeta, -localAlpha,
                                          1, td.killerMoves, td.history, td.pv);
                     td.board.undoMove();
 
@@ -489,15 +311,6 @@ private:
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Main alpha-beta search with:
-    //   - Transposition table
-    //   - PV move ordering (from previous iteration's PV)
-    //   - Null move pruning
-    //   - Late Move Reductions (LMR)
-    //   - Killer / history move ordering
-    //   - SEE-based capture ordering
-    // -----------------------------------------------------------------------
     float search(Board& board, int depth, float alpha, float beta, int ply,
                  Move killerMoves[MAX_DEPTH][2], int history[64][64], PVTable& pv)
     {
@@ -518,7 +331,7 @@ private:
             return searchCaptures(board, alpha, beta, ply, killerMoves, history);
         }
 
-        if (board.draw50Move() || board.repetition()) {
+        if (board.draw50Move() || board.repetition() || board.drawInsufficientMaterial()) {
             return 0.0f;
         }
 
@@ -631,30 +444,43 @@ private:
 
             board.move(move);
 
-            int newDepth = depth - 1 + (inCheck ? 1 : 0);
+            // Detect if this move gives check to the opponent
+            bool givesCheck = board.moveGivesCheck(move);
 
-            // --- Late Move Reductions ---
-            // Reduce more aggressively: start at move 2 (not 3), divide by 2.0 (not 3.0)
+            int newDepth = depth - 1;
+
+            // Extend for: being in check before move, giving check, captures of high value pieces
+            if (inCheck || givesCheck) {
+                newDepth++; // escaping check, giving check: don't reduce
+            }
+
+            // LMR: never reduce if we give check, are in check, capture, or promote
             bool doLMR = (
                 i >= 2              &&
                 depth >= 3          &&
                 !move.isCapture()   &&
                 !move.isPromotion() &&
-                !inCheck
+                !inCheck            &&
+                !givesCheck
             );
 
             if (doLMR) {
-                int reduction = 1 + int(std::log(float(depth)) * std::log(float(i)) / 2.0f);
-                reduction = std::min(reduction, depth - 2);
+                int reduction = 1 + int(std::log(float(depth)) * std::log(float(i)) / 3.0f);
+                reduction = std::min(reduction, depth - 2); // never reduce to 0
 
-                eval = -search(board, newDepth - reduction, -alpha - 1.0f, -alpha,
+                // Don't reduce into qsearch directly
+                int reducedDepth = std::max(1, newDepth - reduction);
+
+                eval = -search(board, reducedDepth, -alpha - 1.0f, -alpha,
                                ply + 1, killerMoves, history, pv);
 
+                // Re-search at full depth without reduction if it beat alpha
                 if (!abort && eval > alpha) {
                     eval = -search(board, newDepth, -alpha - 1.0f, -alpha,
                                    ply + 1, killerMoves, history, pv);
                 }
 
+                // Full window re-search if it still beats alpha
                 if (!abort && eval > alpha && eval < beta) {
                     eval = -search(board, newDepth, -beta, -alpha,
                                    ply + 1, killerMoves, history, pv);
@@ -717,61 +543,82 @@ private:
     }
 
     float searchCaptures(Board& board, float alpha, float beta, int ply,
-                         Move killerMoves[MAX_DEPTH][2], int history[64][64])
-    {
-        if (shouldAbort()) {
-            abort = true;
-            return alpha;
-        }
+                     Move killerMoves[MAX_DEPTH][2], int history[64][64])
+{
+    if (shouldAbort()) { abort = true; return alpha; }
+    if (ply >= MAX_DEPTH - 1) { incrementPositions(); return evaluateBoard(board); }
+    if (board.draw50Move() || board.repetition() || board.drawInsufficientMaterial()) return 0.0f;
 
-        if (ply >= MAX_DEPTH - 1) {
-            incrementPositions();
-            return evaluateBoard(board);
-        }
+    bool inCheck = board.check(board.getPlayerTurn());
 
-        if (board.draw50Move() || board.repetition()) {
-            return 0.0f;
-        }
-
-        float standPat = evaluateBoard(board);
-        incrementPositions();
-
-        if (standPat >= beta)  return standPat;
-        if (standPat > alpha)  alpha = standPat;
-
+    if (inCheck) {
+        // In check: must find a legal move — generate ALL moves, not just captures
+        // Can't stand pat when in check
         MoveList moves;
-        board.getCaptureMoves(moves);
+        board.getValidMoves(moves);
+
+        if (moves.count == 0) return -SEARCH_MATE_SCORE + float(ply); // checkmate
+
+        // Sort: try captures first, then quiets
         sortMoves(board, moves, Move{}, killerMoves[std::min(ply, MAX_DEPTH-1)], history);
 
+        float bestEval = -SEARCH_INF;
         for (int i = 0; i < moves.count; i++) {
-            Move move = moves[i];
-
-            if (!move.isPromotion()) {
-                Piece victim = board.getPiece(move.target());
-                if (standPat + float(seeValue(victim)) + 200.0f < alpha) {
-                    continue;
-                }
-            }
-
-            board.move(move);
+            board.move(moves[i]);
             float eval = -searchCaptures(board, -beta, -alpha, ply + 1, killerMoves, history);
             board.undoMove();
-
             if (abort) return alpha;
-
-            if (eval >= beta)   return beta;
-            if (eval > alpha)   alpha = eval;
+            if (eval > bestEval) bestEval = eval;
+            if (eval > alpha)    alpha = eval;
+            if (alpha >= beta)   return beta;
         }
-
-        return alpha;
+        return bestEval;
     }
 
-    // -----------------------------------------------------------------------
-    // Move scoring for ordering
-    // Priority (descending):
-    //   TT/PV move > promotions > winning captures (SEE>=0) > killers >
-    //   history quiet moves > losing captures (SEE<0)
-    // -----------------------------------------------------------------------
+    // Not in check: normal stand-pat
+    float standPat = evaluateBoard(board);
+    incrementPositions();
+
+    if (standPat >= beta)  return standPat;
+    if (standPat > alpha)  alpha = standPat;
+
+    MoveList moves;
+    board.getCaptureMoves(moves);
+    sortMoves(board, moves, Move{}, killerMoves[std::min(ply, MAX_DEPTH-1)], history);
+
+    for (int i = 0; i < moves.count; i++) {
+        Move move = moves[i];
+
+        // SEE filter: skip clearly losing captures UNLESS they give check
+        // because a losing capture that gives check might win material next move
+        board.move(move);
+        bool movGivesCheck = board.check(board.getPlayerTurn());
+        board.undoMove();
+
+        if (!movGivesCheck && !move.isPromotion()) {
+            int seeScore = see(board, move);
+            if (seeScore < 0) continue; // truly losing, no check trick
+        }
+
+        // Delta pruning: skip if even capturing this piece can't raise alpha
+        // But never skip if the move gives check
+        if (!movGivesCheck && !move.isPromotion()) {
+            Piece victim = board.getPiece(move.target());
+            if (standPat + float(seeValue(victim)) + 150.0f < alpha) continue;
+        }
+
+        board.move(move);
+        float eval = -searchCaptures(board, -beta, -alpha, ply + 1, killerMoves, history);
+        board.undoMove();
+
+        if (abort) return alpha;
+        if (eval >= beta)  return beta;
+        if (eval > alpha)  alpha = eval;
+    }
+
+    return alpha;
+}
+
     [[nodiscard]] static float guessMoveScore(Board& board, const Move& move,
                                               const Move& ttMove,
                                               const Move killerMoves[2],
@@ -814,25 +661,27 @@ private:
         return score;
     }
 
+    // Replace the sortMoves function:
     static void sortMoves(Board& board, MoveList& moves, const Move& ttMove,
                           const Move killerMoves[2], const int history[64][64])
     {
-        std::array<ScoredMove, 256> scoredMoves;
+        // Score all moves first
+        static thread_local std::array<float, 256> scores;
+        for (int i = 0; i < moves.count; i++)
+            scores[i] = guessMoveScore(board, moves[i], ttMove, killerMoves, history);
 
-        for (int i = 0; i < moves.count; i++) {
-            scoredMoves[i] = {
-                moves[i],
-                guessMoveScore(board, moves[i], ttMove, killerMoves, history)
-            };
-        }
-
-        std::sort(scoredMoves.begin(), scoredMoves.begin() + moves.count,
-                  [](const ScoredMove& a, const ScoredMove& b) {
-                      return a.score > b.score;
-                  });
-
-        for (int i = 0; i < moves.count; i++) {
-            moves[i] = scoredMoves[i].move;
+        // Insertion sort — faster than std::sort for typical move counts (20-40)
+        for (int i = 1; i < moves.count; i++) {
+            Move  m = moves[i];
+            float s = scores[i];
+            int j = i - 1;
+            while (j >= 0 && scores[j] < s) {
+                moves[j+1]  = moves[j];
+                scores[j+1] = scores[j];
+                j--;
+            }
+            moves[j+1]  = m;
+            scores[j+1] = s;
         }
     }
 

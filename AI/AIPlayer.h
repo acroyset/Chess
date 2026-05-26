@@ -24,8 +24,10 @@ class AIPlayer : public Player {
 	int maxDepth = 32;
 
 	SearchResult lastSearch{};
+	int lastThinkingTimeMs = 0;
 
 	bool started = false;
+	std::chrono::time_point<std::chrono::steady_clock> searchStartTime;
 	std::chrono::time_point<std::chrono::steady_clock> endTime;
 	bool currentSearchBlackToMove = false;
 	bool lastSearchBlackToMove = false;
@@ -50,6 +52,7 @@ public:
 				lastSearch = SearchResult{};
 				lastSearch.bestMove = bookMove.value();
 				lastSearch.finished = true;
+				lastThinkingTimeMs = 0;
 				lastSearchBlackToMove = currentSearchBlackToMove;
 				lastMoveFromOpeningBook = true;
 				return bookMove.value();
@@ -57,9 +60,10 @@ public:
 
 			lastMoveFromOpeningBook = false;
 			thinkingTimeMs = adaptiveThinkingTime();
+			searchStartTime = std::chrono::steady_clock::now();
 			searcher->startSearch(board);
 
-			endTime = std::chrono::steady_clock::now() + std::chrono::milliseconds(thinkingTimeMs);
+			endTime = searchStartTime + std::chrono::milliseconds(thinkingTimeMs);
 
 			started = true;
 
@@ -69,6 +73,10 @@ public:
 
 		if (std::chrono::steady_clock::now() < endTime) return std::nullopt;
 
+		auto finishedThinkingAt = std::chrono::steady_clock::now();
+		lastThinkingTimeMs = int(std::chrono::duration_cast<std::chrono::milliseconds>(
+			finishedThinkingAt - searchStartTime
+		).count());
 		lastSearch = searcher->getResult();
 		lastSearchBlackToMove = currentSearchBlackToMove;
 		lastMoveFromOpeningBook = false;
@@ -91,6 +99,9 @@ public:
 	}
 	[[nodiscard]] bool usedOpeningBook() const {
 		return lastMoveFromOpeningBook;
+	}
+	[[nodiscard]] int getLastThinkingTimeMs() const {
+		return lastThinkingTimeMs;
 	}
 
 private:

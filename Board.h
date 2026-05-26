@@ -269,7 +269,31 @@ public:
             possibleMoves.clear();
             getPossibleMoves(position, possibleMoves);
 
+            bool inCheck = check(state.playerTurn);
+            Position kingPos = state.playerTurn ? state.blackKing : state.whiteKing;
+
             for (int i = 0; i < possibleMoves.count; i++) {
+                Move move = possibleMoves[i];
+
+                // Fast rejection: if not in check and the piece isn't on a king ray,
+                // only castling moves need full validation
+                if (!inCheck && !move.isCastleKing() && !move.isCastleQueen()) {
+                    // Check if moving piece is on same rank/file/diagonal as king
+                    // (potential pin) — only then do full validation
+                    Position from = move.starting();
+                    bool couldBePin = false;
+                    int dr = int(from.rank()) - int(kingPos.rank());
+                    int df = int(from.file()) - int(kingPos.file());
+                    // On same rank, file, or diagonal
+                    if (dr == 0 || df == 0 || std::abs(dr) == std::abs(df))
+                        couldBePin = true;
+
+                    if (!couldBePin) {
+                        validMoves.push(move);
+                        continue;
+                    }
+                }
+
                 if (validMove(possibleMoves[i])) {
                     validMoves.push(possibleMoves[i]);
                 }
@@ -289,7 +313,31 @@ public:
             captureMoves.clear();
             getPossibleCaptures(position, captureMoves);
 
+            bool inCheck = check(state.playerTurn);
+            Position kingPos = state.playerTurn ? state.blackKing : state.whiteKing;
+
             for (int i = 0; i < captureMoves.count; i++) {
+                Move move = captureMoves[i];
+
+                // Fast rejection: if not in check and the piece isn't on a king ray,
+                // only castling moves need full validation
+                if (!inCheck && !move.isCastleKing() && !move.isCastleQueen()) {
+                    // Check if moving piece is on same rank/file/diagonal as king
+                    // (potential pin) — only then do full validation
+                    Position from = move.starting();
+                    bool couldBePin = false;
+                    int dr = int(from.rank()) - int(kingPos.rank());
+                    int df = int(from.file()) - int(kingPos.file());
+                    // On same rank, file, or diagonal
+                    if (dr == 0 || df == 0 || std::abs(dr) == std::abs(df))
+                        couldBePin = true;
+
+                    if (!couldBePin) {
+                        validMoves.push(move);
+                        continue;
+                    }
+                }
+
                 if (validMove(captureMoves[i])) {
                     validMoves.push(captureMoves[i]);
                 }
@@ -303,8 +351,31 @@ public:
 
         getPossibleMoves(position, possibleMoves);
 
+        bool inCheck = check(state.playerTurn);
+        Position kingPos = state.playerTurn ? state.blackKing : state.whiteKing;
+
         for (int i = 0; i < possibleMoves.count; i++) {
             Move move = possibleMoves[i];
+
+            // Fast rejection: if not in check and the piece isn't on a king ray,
+            // only castling moves need full validation
+            if (!inCheck && !move.isCastleKing() && !move.isCastleQueen()) {
+                // Check if moving piece is on same rank/file/diagonal as king
+                // (potential pin) — only then do full validation
+                Position from = move.starting();
+                bool couldBePin = false;
+                int dr = int(from.rank()) - int(kingPos.rank());
+                int df = int(from.file()) - int(kingPos.file());
+                // On same rank, file, or diagonal
+                if (dr == 0 || df == 0 || std::abs(dr) == std::abs(df))
+                    couldBePin = true;
+
+                if (!couldBePin) {
+                    validMoves.push(move);
+                    continue;
+                }
+            }
+
             if (validMove(move)) {
                 validMoves.push(move);
             }
@@ -321,18 +392,114 @@ public:
         std::cerr << "No King"<< std::endl;
         return false;
     }
+    bool moveGivesCheck(Move move) const {
+        Position target = move.target();
+        Piece piece = getPiece(move.starting());
+        bool black = piece >> 3;
+        Position enemyKing = black ? state.whiteKing : state.blackKing;
+
+        if (enemyKing.isNone()) return false;
+
+        int kr = enemyKing.rank(), kf = enemyKing.file();
+        int tr = target.rank(),    tf = target.file();
+
+        switch (piece & 7) {
+            case 1: { // pawn
+                int dir = black ? -1 : 1;
+                return (tr == kr + dir) && (tf == kf - 1 || tf == kf + 1);
+            }
+            case 2: { // knight
+                int dr = std::abs(tr - kr), df = std::abs(tf - kf);
+                return (dr == 2 && df == 1) || (dr == 1 && df == 2);
+            }
+            case 3: { // bishop — check if target is on same diagonal as enemy king
+                int dr = std::abs(tr - kr), df = std::abs(tf - kf);
+                if (dr != df) return false;
+                // Verify no pieces between target and king
+                int sr = (kr > tr) ? 1 : -1, sf = (kf > tf) ? 1 : -1;
+                int r = tr + sr, f = tf + sf;
+                while (r != kr || f != kf) {
+                    if (getPiece(Position(r, f)) != EMPTY) return false;
+                    r += sr; f += sf;
+                }
+                return true;
+            }
+            case 4: { // rook
+                if (tr != kr && tf != kf) return false;
+                int sr = (tr == kr) ? 0 : (kr > tr ? 1 : -1);
+                int sf = (tf == kf) ? 0 : (kf > tf ? 1 : -1);
+                int r = tr + sr, f = tf + sf;
+                while (r != kr || f != kf) {
+                    if (getPiece(Position(r, f)) != EMPTY) return false;
+                    r += sr; f += sf;
+                }
+                return true;
+            }
+            case 5: { // queen — bishop + rook combined
+                int dr = std::abs(tr - kr), df = std::abs(tf - kf);
+                bool diagonal   = (dr == df);
+                bool orthogonal = (tr == kr || tf == kf);
+                if (!diagonal && !orthogonal) return false;
+                int sr = (kr == tr) ? 0 : (kr > tr ? 1 : -1);
+                int sf = (kf == tf) ? 0 : (kf > tf ? 1 : -1);
+                int r = tr + sr, f = tf + sf;
+                while (r != kr || f != kf) {
+                    if (getPiece(Position(r, f)) != EMPTY) return false;
+                    r += sr; f += sf;
+                }
+                return true;
+            }
+            default: return false; // king moves — ignore
+        }
+    }
     [[nodiscard]] bool checkMate() {
         return noMoves(state.playerTurn) && check(state.playerTurn);
     }
     [[nodiscard]] bool draw() {
         if (draw50Move()) return true;
         if (drawRepetition()) return true;
+        if (drawInsufficientMaterial()) return true;
         if (staleMate(state.playerTurn)) return true;
 
         return false;
     }
     [[nodiscard]] bool draw50Move() const {
         return state.lastPawnMoveOrCapture >= 100;
+    }
+    [[nodiscard]] bool drawInsufficientMaterial() const {
+        const uint64_t pawns =
+            state.pieceBits[WHITE_PAWN] | state.pieceBits[BLACK_PAWN];
+        const uint64_t rooks =
+            state.pieceBits[WHITE_ROOK] | state.pieceBits[BLACK_ROOK];
+        const uint64_t queens =
+            state.pieceBits[WHITE_QUEEN] | state.pieceBits[BLACK_QUEEN];
+
+        if (pawns || rooks || queens) return false;
+
+        const uint64_t knights =
+            state.pieceBits[WHITE_KNIGHT] | state.pieceBits[BLACK_KNIGHT];
+        const uint64_t bishops =
+            state.pieceBits[WHITE_BISHOP] | state.pieceBits[BLACK_BISHOP];
+        const uint64_t minors = knights | bishops;
+
+        if (!minors) return true;
+
+        if (knights) {
+            return __builtin_popcountll(minors) == 1;
+        }
+
+        bool hasLightBishop = false;
+        bool hasDarkBishop = false;
+        uint64_t bishopBits = bishops;
+
+        while (bishopBits) {
+            const int square = popLsb(bishopBits);
+            const bool lightSquare = ((square / 8) + (square % 8)) & 1;
+            hasLightBishop = hasLightBishop || lightSquare;
+            hasDarkBishop = hasDarkBishop || !lightSquare;
+        }
+
+        return !(hasLightBishop && hasDarkBishop);
     }
     [[nodiscard]] bool drawRepetition() const {
         uint64_t current = state.hash;
@@ -612,9 +779,6 @@ public:
     }
     [[nodiscard]] uint64_t getHash() const {
         return state.hash;
-    }
-    [[nodiscard]] bool isSquareAttacked(Position square, bool byBlack) const {
-        return squareAttacked(square, byBlack);
     }
 
     [[nodiscard]] uint64_t computePolyglotHash() const {

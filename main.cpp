@@ -57,34 +57,83 @@ int main() {
     int width = int(window.getSize().x);
     int height = int(window.getSize().y);
     float tileSize = float(height)/8.0f;
+    constexpr float boardX = 0.0f;
 
     Searcher searcher;
-    uiDrawer renderer(width, height, searcher);
+    uiDrawer renderer(width, height, boardX, searcher);
 
     Board board;
-    PieceDrawer pieceDrawer(tileSize);
-    MoveDrawer moveDrawer(tileSize);
+    PieceDrawer pieceDrawer(tileSize, boardX);
+    MoveDrawer moveDrawer(tileSize, boardX);
 
-    std::unique_ptr<Player> whitePlayer = std::make_unique<AIPlayer>(&searcher, 10.0f);
-    std::unique_ptr<Player> blackPlayer = std::make_unique<AIPlayer>(&searcher, 10.0f);
+    std::unique_ptr<Player> whitePlayer = std::make_unique<AIPlayer>(&searcher, 1.0f * 60.0f, 1.0f);
+    std::unique_ptr<Player> blackPlayer = std::make_unique<AIPlayer>(&searcher, 1.0f * 60.0f, 1.0f);
 
 
     bool blackAtBottom = false;
 
-    if (auto* humanPlayer = dynamic_cast<HumanPlayer*>(whitePlayer.get())) {
-        humanPlayer->setBlackAtBottom(blackAtBottom);
-    }
-    if (auto* humanPlayer = dynamic_cast<HumanPlayer*>(blackPlayer.get())) {
-        humanPlayer->setBlackAtBottom(blackAtBottom);
-    }
+    auto applyBoardOrientation = [&]() {
+        if (auto* humanPlayer = dynamic_cast<HumanPlayer*>(whitePlayer.get())) {
+            humanPlayer->setBlackAtBottom(blackAtBottom);
+        }
+        if (auto* humanPlayer = dynamic_cast<HumanPlayer*>(blackPlayer.get())) {
+            humanPlayer->setBlackAtBottom(blackAtBottom);
+        }
+    };
+    applyBoardOrientation();
 
     std::vector<MoveRecord> moveHistory;
+    AIPlayer* lastCompletedAi = nullptr;
+
+    auto resetPlayerInput = [&]() {
+        whitePlayer->resetInput();
+        blackPlayer->resetInput();
+    };
+
+    auto resetHumanInput = [&]() {
+        if (auto* humanPlayer = dynamic_cast<HumanPlayer*>(whitePlayer.get())) {
+            humanPlayer->resetInput();
+        }
+        if (auto* humanPlayer = dynamic_cast<HumanPlayer*>(blackPlayer.get())) {
+            humanPlayer->resetInput();
+        }
+    };
+
+    auto loadFenFromClipboard = [&]() {
+        std::string fen = pasteFromClipboard();
+        if (fen.empty() || fen.find('/') == std::string::npos) return;
+
+        try {
+            Board newBoard(fen);
+            board = newBoard;
+            moveHistory.clear();
+            lastCompletedAi = nullptr;
+            auto fenCaptures = inferCapturedFromFEN(board);
+            renderer.setFenCaptures(fenCaptures);
+            resetPlayerInput();
+            searcher.endSearch();
+            searcher.startSearch(board);
+            std::cerr << "FEN loaded OK\n";
+        } catch (...) {
+            std::cerr << "Invalid FEN\n";
+        }
+    };
+
+    auto copyCurrentFen = [&]() {
+        std::string fen = boardToFEN(board);
+        copyToClipboard(fen);
+        std::cerr << "FEN: " << fen << "\n";
+    };
 
     bool analyticsMode = true;
     sf::Clock clock;
     while (window.isOpen()) {
         bool undoRequested = false;
         bool toggleAnalyticsRequested = false;
+        bool flipBoardRequested = false;
+        bool copyFenRequested = false;
+        bool pasteFenRequested = false;
+        bool uiControlClicked = false;
 
         while (const std::optional event = window.pollEvent()) {
             if (event->is<sf::Event::Closed>()) {
@@ -100,30 +149,16 @@ int main() {
 
                 // F = paste FEN from clipboard and load
                 if (keyPressed->code == sf::Keyboard::Key::F) {
-                    std::string fen = pasteFromClipboard();
-                    if (!fen.empty() && fen.find('/') != std::string::npos) {
-                        try {
-                            Board newBoard(fen);
-                            board = newBoard;
-                            moveHistory.clear();
-                            auto fenCaptures = inferCapturedFromFEN(board);
-                            renderer.setFenCaptures(fenCaptures);
-                            whitePlayer->resetInput();
-                            blackPlayer->resetInput();
-                            searcher.endSearch();
-                            searcher.startSearch(board);
-                            std::cerr << "FEN loaded OK\n";
-                        } catch (...) {
-                            std::cerr << "Invalid FEN\n";
-                        }
-                    }
+                    pasteFenRequested = true;
                 }
 
                 // C = copy current FEN to clipboard
                 if (keyPressed->code == sf::Keyboard::Key::C) {
-                    std::string fen = boardToFEN(board);
-                    copyToClipboard(fen);
-                    std::cerr << "FEN: " << fen << "\n";
+                    copyFenRequested = true;
+                }
+
+                if (keyPressed->code == sf::Keyboard::Key::B) {
+                    flipBoardRequested = true;
                 }
 
                 // P = copy PGN to clipboard
@@ -137,9 +172,23 @@ int main() {
                 if (mousePressed->button == sf::Mouse::Button::Left) {
                     if (renderer.analyticsButtonContains(mousePressed->position)) {
                         toggleAnalyticsRequested = true;
+                        uiControlClicked = true;
                     }
                     else if (renderer.undoButtonContains(mousePressed->position)) {
                         undoRequested = true;
+                        uiControlClicked = true;
+                    }
+                    else if (renderer.flipButtonContains(mousePressed->position)) {
+                        flipBoardRequested = true;
+                        uiControlClicked = true;
+                    }
+                    else if (renderer.copyFenButtonContains(mousePressed->position)) {
+                        copyFenRequested = true;
+                        uiControlClicked = true;
+                    }
+                    else if (renderer.pasteFenButtonContains(mousePressed->position)) {
+                        pasteFenRequested = true;
+                        uiControlClicked = true;
                     }
                 }
             }
@@ -152,12 +201,26 @@ int main() {
             renderer.setAnalyticsMode(analyticsMode);
         }
 
-        bool skipMoveSelection = false;
-        if (analyticsMode && undoRequested && !moveHistory.empty()) {
+        if (flipBoardRequested) {
+            blackAtBottom = !blackAtBottom;
+            applyBoardOrientation();
+            resetHumanInput();
+        }
+
+        if (copyFenRequested) {
+            copyCurrentFen();
+        }
+
+        if (pasteFenRequested) {
+            loadFenFromClipboard();
+        }
+
+        bool skipMoveSelection = uiControlClicked || flipBoardRequested || copyFenRequested || pasteFenRequested;
+        if (undoRequested && !moveHistory.empty()) {
             board.undoMove();
             moveHistory.pop_back();
-            whitePlayer->resetInput();
-            blackPlayer->resetInput();
+            lastCompletedAi = nullptr;
+            resetPlayerInput();
             skipMoveSelection = true;
 
             searcher.endSearch();
@@ -180,8 +243,6 @@ int main() {
         bool timeOut = whiteFlagged || blackFlagged;
         endGame = endGame || timeOut;
 
-        renderer.update(board, deltaTime, moveHistory, currentPlayer, whitePlayer.get(), blackPlayer.get(), whiteFlagged, blackFlagged, blackAtBottom, analyticsMode);
-
 	    std::optional<Move> chosenMove = std::nullopt;
         if (!endGame && window.hasFocus() && !skipMoveSelection) {
             chosenMove = currentPlayer->selectMove(board, window);
@@ -202,6 +263,9 @@ int main() {
 
 	        if (board.move(move)) {
 	            currentPlayer->incrementTime();
+	            if (auto* ai = dynamic_cast<AIPlayer*>(currentPlayer)) {
+	                lastCompletedAi = ai;
+	            }
 
 	            appendCheckSuffix(san, board);
 	            moveHistory.push_back({move, san, capturedPiece});
@@ -209,6 +273,10 @@ int main() {
 	            searcher.startSearch(board);
 	        }
 	    }
+
+        whiteFlagged = whitePlayer->outOfTime();
+        blackFlagged = blackPlayer->outOfTime();
+        renderer.update(board, deltaTime, moveHistory, lastCompletedAi, whitePlayer.get(), blackPlayer.get(), whiteFlagged, blackFlagged, blackAtBottom, analyticsMode);
 
         for (Position position; position <= Position(7, 7); position++) {;
 

@@ -15,6 +15,7 @@ class PieceDrawer {
     sf::Sprite pieceMarker{textureMap};
     sf::Vector2u textureSize;
     float tileSize;
+    float boardX;
     sf::Font font;
     sf::Text coordinateText{font};
     bool fontLoaded = false;
@@ -28,7 +29,7 @@ class PieceDrawer {
 
 public:
 
-    explicit PieceDrawer(float tileSize) : tileSize(tileSize) {
+    explicit PieceDrawer(float tileSize, float boardX = 0.0f) : tileSize(tileSize), boardX(boardX) {
         if (!textureMap.loadFromFile("Render/ChessPieces.png")) {
             std::cerr << "Error loading texture!" << std::endl;
             return;
@@ -65,7 +66,7 @@ public:
             background.setFillColor(highlighted ? greenHighlighted : green);
         }
 
-        background.setPosition({float(displayFile)*tileSize, float(displayRank)*tileSize});
+        background.setPosition({boardX + float(displayFile)*tileSize, float(displayRank)*tileSize});
         window.draw(background);
 
         if (position.isNone()) return;
@@ -76,7 +77,7 @@ public:
             getSpriteSheetCoords(piece, x, y);
 
             pieceMarker.setTextureRect(sf::IntRect({int(x*textureSize.x/6), int(y*textureSize.y/2)}, {int(textureSize.x)/6, int(textureSize.y)/2}));
-            pieceMarker.setPosition({tileSize*float(displayFile), tileSize*float(displayRank)});
+            pieceMarker.setPosition({boardX + tileSize*float(displayFile), tileSize*float(displayRank)});
             window.draw(pieceMarker);
         }
 
@@ -94,7 +95,7 @@ public:
 
         coordinateText.setFillColor(lightSquare ? green : white);
 
-        float x = float(displayFile) * tileSize;
+        float x = boardX + float(displayFile) * tileSize;
         float y = float(displayRank) * tileSize;
         float margin = tileSize * 0.05f;
 
