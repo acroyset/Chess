@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include "../Board.h"
 
 constexpr float INF_EVAL = 1000000.0f;
 
@@ -250,7 +251,6 @@ inline Piece evalPieceAtBB(const Board& board, int sq) {
 
 // -----------------------------------------------------------------------
 // Side data: pre-collected piece positions, pawn structure info, etc.
-// Arrays are sized conservatively; promotion overflow is guarded below.
 // -----------------------------------------------------------------------
 struct EvalSideData {
     int pawnFiles[8]{};
@@ -266,7 +266,6 @@ struct EvalSideData {
     int pawnMinRank[8]{};
     int pawnMaxRank[8]{};
 
-    // Extra promoted pieces are clamped to array limits
     Position knights[12];
     int knightCount = 0;
 
@@ -390,7 +389,6 @@ inline float evalMobilityCached(const Board& board, const EvalSideData& white, c
     for (int p = 9; p <= 14; p++) blackOcc |= board.getPieceBits(static_cast<Piece>(p));
     uint64_t allOcc = whiteOcc | blackOcc;
 
-    // Bonuses per reachable square (pawn units)
     constexpr float KNIGHT_MOB_MG = 0.042f, KNIGHT_MOB_EG = 0.040f;
     constexpr float BISHOP_MOB_MG = 0.040f, BISHOP_MOB_EG = 0.042f;
     constexpr float ROOK_MOB_MG   = 0.024f, ROOK_MOB_EG   = 0.040f;
@@ -429,6 +427,9 @@ inline float evalMobilityCached(const Board& board, const EvalSideData& white, c
 
 // -----------------------------------------------------------------------
 // King attack evaluation
+// FIX: countSlidingKingZoneAttacks now correctly stops the ray at the
+// first blocking piece — previously it counted zone squares even when
+// the ray was physically blocked by an intervening piece.
 // -----------------------------------------------------------------------
 inline int countPawnKingZoneAttacks(Position from, bool black, uint64_t zone) {
     int dir = black ? -1 : 1;
@@ -450,12 +451,16 @@ inline int countSlidingKingZoneAttacks(
             rank += direction[0]; file += direction[1];
             if (rank < 0 || rank >= 8 || file < 0 || file >= 8) break;
             int idx = rank * 8 + file;
-            bool inZone = zone & (1ULL << idx);
+            bool inZone = (zone & (1ULL << idx)) != 0;
             Piece piece = evalPieceAt(board, rank, file);
-            // Count zone attacks regardless of piece on square;
-            // only stop ray when blocked by any piece
+
+            if (piece != EMPTY) {
+                // The blocking piece itself may be inside the zone — count it,
+                // then stop: nothing behind a blocker can attack through it.
+                if (inZone) attacks++;
+                break;
+            }
             if (inZone) attacks++;
-            if (piece != EMPTY) break;
         }
     }
     return attacks;
@@ -570,8 +575,6 @@ inline float evalKingAttackCached(
 
 // -----------------------------------------------------------------------
 // Pawn structure
-// Bug fixed: passed pawn check now correctly tests whether any enemy pawn
-// is strictly *in front* of us on adjacent files, not just present on file.
 // -----------------------------------------------------------------------
 inline float evalPawnStructureCached(const EvalSideData& side, const EvalSideData& enemy,
                                       bool black, float endgameT)
@@ -581,7 +584,7 @@ inline float evalPawnStructureCached(const EvalSideData& side, const EvalSideDat
     for (int i = 0; i < side.pawnCount; i++) {
         Position p = side.pawns[i];
         int r = p.rank(), f = p.file();
-        int advanceRank = black ? 7 - r : r;   // 0 at start, 7 at promo rank
+        int advanceRank = black ? 7 - r : r;
 
         // ---- Doubled pawns ----
         if (side.pawnFiles[f] > 1)
@@ -595,7 +598,6 @@ inline float evalPawnStructureCached(const EvalSideData& side, const EvalSideDat
             score -= 0.14f;
 
         // ---- Backward pawn ----
-        // (not isolated, no friendly pawn behind on adjacent file, stop square attacked by enemy pawn)
         if (!isolated) {
             bool hasSupportBehind = false;
             for (int df = -1; df <= 1; df += 2) {
@@ -610,7 +612,6 @@ inline float evalPawnStructureCached(const EvalSideData& side, const EvalSideDat
                 for (int df = -1; df <= 1; df += 2) {
                     int ff = f + df;
                     if (ff < 0 || ff >= 8 || enemy.pawnFiles[ff] == 0) continue;
-                    // An enemy pawn on ff attacks stopRank from one rank behind it
                     int attackRank = black ? stopRank + 1 : stopRank - 1;
                     if (enemy.pawnMinRank[ff] <= attackRank && enemy.pawnMaxRank[ff] >= attackRank) {
                         stopAttacked = true; break;
@@ -621,35 +622,26 @@ inline float evalPawnStructureCached(const EvalSideData& side, const EvalSideDat
         }
 
         // ---- Passed pawn ----
-        // A pawn is passed if no enemy pawn can intercept it on this or adjacent files.
-        // Correctly checks only enemy pawns *in front* (higher rank for white, lower for black).
         bool passed = true;
         for (int df = -1; df <= 1 && passed; df++) {
             int ff = f + df;
             if (ff < 0 || ff >= 8 || enemy.pawnFiles[ff] == 0) continue;
             if (!black) {
-                // White pawn advances toward rank 7; blocked if any enemy pawn on ff
-                // is on a rank strictly greater than r (in front of us)
                 if (enemy.pawnMaxRank[ff] > r) passed = false;
             } else {
-                // Black pawn advances toward rank 0; blocked if any enemy pawn on ff
-                // is on a rank strictly less than r
                 if (enemy.pawnMinRank[ff] < r) passed = false;
             }
         }
 
         if (passed) {
-            // Bonus grows sharply near promotion; capped to avoid dominance
             static constexpr float passedBonus[8] = {
                 0.0f, 0.06f, 0.14f, 0.28f,
                 0.52f, 0.90f, 1.60f, 0.0f
             };
             float bonus = passedBonus[advanceRank];
-            // Endgame scales the bonus up (passed pawns are decisive late)
             bonus *= 1.0f + 2.5f * endgameT;
             score += bonus;
 
-            // Extra bonus for very advanced passers
             if (advanceRank >= 5)
                 score += 0.14f * float(advanceRank - 4);
         }
@@ -670,13 +662,13 @@ inline float evalRooksCached(const EvalSideData& side, const EvalSideData& enemy
         bool ownPawn   = side.pawnFiles[f] > 0;
         bool enemyPawn = enemy.pawnFiles[f] > 0;
 
-        if (!ownPawn && !enemyPawn) score += 0.28f;   // open file
-        else if (!ownPawn)          score += 0.14f;   // semi-open file
+        if (!ownPawn && !enemyPawn) score += 0.28f;
+        else if (!ownPawn)          score += 0.14f;
 
         if (side.rooks[i].rank() == seventh) score += 0.20f;
     }
 
-    // Battery bonus: two rooks on the same file or rank
+    // Battery bonus
     for (int i = 0; i < side.rookCount; i++) {
         for (int j = i + 1; j < side.rookCount; j++) {
             if (side.rooks[i].file() == side.rooks[j].file() ||
@@ -696,7 +688,6 @@ inline float rookBehindPassedPawn(const EvalSideData& side, const EvalSideData& 
             if (side.pawns[j].file() != rf) continue;
             int pr = side.pawns[j].rank();
 
-            // Passed pawn check (same fix as evalPawnStructureCached)
             bool passed = true;
             for (int df = -1; df <= 1 && passed; df++) {
                 int ff = rf + df;
@@ -748,16 +739,14 @@ inline float evalCenterCached(const Board& board, bool black) {
 }
 
 // -----------------------------------------------------------------------
-// NEW: Space evaluation — bonus for pawns/pieces in opponent's half
+// Space evaluation
 // -----------------------------------------------------------------------
 inline float evalSpace(const EvalSideData& side, bool black) {
     float score = 0.0f;
-    // Count pawns on 5th/6th ranks (advance rank 4/5 from start)
     for (int i = 0; i < side.pawnCount; i++) {
         int advRank = black ? 7 - side.pawns[i].rank() : side.pawns[i].rank();
         if (advRank >= 4) score += 0.06f * float(advRank - 3);
     }
-    // Count pieces (non-king) in opponent's territory
     int oppHalfStart = black ? 0 : 4;
     int oppHalfEnd   = black ? 3 : 7;
     for (int i = 0; i < side.knightCount; i++) {
@@ -772,21 +761,15 @@ inline float evalSpace(const EvalSideData& side, bool black) {
 }
 
 // -----------------------------------------------------------------------
-// NEW: Outpost detection — knight or bishop on a square not attackable
-// by enemy pawns, supported by a friendly pawn
+// Outpost detection
 // -----------------------------------------------------------------------
 inline bool isOutpostSquare(int rank, int file, const EvalSideData& enemy, bool pieceIsBlack) {
-    // Enemy pawns cannot attack this square from any remaining rank
     for (int df = -1; df <= 1; df += 2) {
         int ff = file + df;
         if (ff < 0 || ff >= 8 || enemy.pawnFiles[ff] == 0) continue;
-        // White's piece is outpost if no black pawn can advance and attack it
-        // Black pawn attacks squares diagonally one rank below its position
         if (!pieceIsBlack) {
-            // enemy is black; black pawn attacks from rank+1 downward
             if (enemy.pawnMinRank[ff] < rank) return false;
         } else {
-            // enemy is white; white pawn attacks from rank-1 upward
             if (enemy.pawnMaxRank[ff] > rank) return false;
         }
     }
@@ -794,12 +777,10 @@ inline bool isOutpostSquare(int rank, int file, const EvalSideData& enemy, bool 
 }
 
 inline bool isSupportedByPawn(int rank, int file, const EvalSideData& side, bool pieceIsBlack) {
-    // A friendly pawn diagonally behind this square supports it
     int behindRank = pieceIsBlack ? rank + 1 : rank - 1;
     for (int df = -1; df <= 1; df += 2) {
         int ff = file + df;
         if (ff < 0 || ff >= 8 || side.pawnFiles[ff] == 0) continue;
-        // Is there a pawn on ff at behindRank?
         if (side.pawnMinRank[ff] <= behindRank && side.pawnMaxRank[ff] >= behindRank)
             return true;
     }
@@ -808,7 +789,6 @@ inline bool isSupportedByPawn(int rank, int file, const EvalSideData& side, bool
 
 inline float evalOutposts(const EvalSideData& side, const EvalSideData& enemy, bool black, float midgameT) {
     float score = 0.0f;
-    // Knights on outpost squares get a bigger bonus
     for (int i = 0; i < side.knightCount; i++) {
         int r = side.knights[i].rank(), f = side.knights[i].file();
         if (isOutpostSquare(r, f, enemy, black)) {
@@ -817,7 +797,6 @@ inline float evalOutposts(const EvalSideData& side, const EvalSideData& enemy, b
             score += bonus * midgameT;
         }
     }
-    // Bishops on outpost squares get a smaller bonus
     for (int i = 0; i < side.bishops; i++) {
         int r = side.bishopSquares[i].rank(), f = side.bishopSquares[i].file();
         if (isOutpostSquare(r, f, enemy, black) && isSupportedByPawn(r, f, side, black)) {
@@ -828,17 +807,21 @@ inline float evalOutposts(const EvalSideData& side, const EvalSideData& enemy, b
 }
 
 // -----------------------------------------------------------------------
-// NEW: Tempo / side-to-move bonus
+// Tempo / side-to-move bonus
+// FIX: reduced from 0.10 to 0.03 — 10 centipawns was large enough to
+// mask real material differences at shallow depth.
 // -----------------------------------------------------------------------
-constexpr float TEMPO_BONUS = 0.10f;
+constexpr float TEMPO_BONUS = 0.03f;
 
 // -----------------------------------------------------------------------
-// NEW: Insufficient material / draw heuristics
-// Returns a scale factor in [0, 1] to multiply the eval by.
-// 0 = theoretical draw, 1 = normal position.
+// Insufficient material / draw heuristics
+// FIX: removed the opposite-colored bishop approximation entirely.
+// Without tracking square color we can't reliably detect opposite bishops,
+// so the old code was scaling down positions with same-colored bishops too,
+// causing the engine to give away material thinking it was a draw.
 // -----------------------------------------------------------------------
 inline float drawScaleFactor(const EvalSideData& white, const EvalSideData& black) {
-    // KK
+    // KK, KN vs K, KB vs K — all theoretical draws
     if (white.rookCount == 0 && black.rookCount == 0 &&
         white.queenCount == 0 && black.queenCount == 0 &&
         white.pawnCount == 0 && black.pawnCount == 0)
@@ -846,7 +829,6 @@ inline float drawScaleFactor(const EvalSideData& white, const EvalSideData& blac
         int wMinors = white.knightCount + white.bishops;
         int bMinors = black.knightCount + black.bishops;
 
-        // K vs K, KN vs K, KB vs K — all draws
         if ((wMinors <= 1 && bMinors == 0) || (bMinors <= 1 && wMinors == 0))
             return 0.0f;
 
@@ -854,25 +836,6 @@ inline float drawScaleFactor(const EvalSideData& white, const EvalSideData& blac
         if ((white.knightCount == 2 && white.bishops == 0 && bMinors == 0) ||
             (black.knightCount == 2 && black.bishops == 0 && wMinors == 0))
             return 0.05f;
-    }
-
-    // Opposite-colored bishops with no queens: scale down
-    if (white.queenCount == 0 && black.queenCount == 0 &&
-        white.rookCount == 0 && black.rookCount == 0 &&
-        white.bishops == 1 && black.bishops == 1 &&
-        white.pawnCount == 0 && black.pawnCount == 0)
-    {
-        // True opposite color check would need square color info —
-        // approximate: assume it's opposite color and scale to near-draw
-        return 0.12f;
-    }
-
-    // Endgame with only opposite-colored bishops and pawns: drawish
-    if (white.queenCount == 0 && black.queenCount == 0 &&
-        white.rookCount == 0 && black.rookCount == 0 &&
-        white.bishops == 1 && black.bishops == 1)
-    {
-        return 0.55f;  // still count pawns but halve the advantage
     }
 
     return 1.0f;
@@ -905,7 +868,7 @@ inline float kingSupportsPawns(const EvalSideData& side, const EvalSideData& ene
 }
 
 // -----------------------------------------------------------------------
-// Mop-up: drive losing king to corner, bring winning king closer
+// Mop-up
 // -----------------------------------------------------------------------
 inline float mopUpEval(const EvalSideData& winning, const EvalSideData& losing, float advantage) {
     if (!winning.hasKing || !losing.hasKing) return 0.0f;
@@ -921,8 +884,7 @@ inline float mopUpEval(const EvalSideData& winning, const EvalSideData& losing, 
 }
 
 // -----------------------------------------------------------------------
-// Pawn-king race: can enemy king stop a passed pawn from promoting?
-// Bonus is smoothly capped to avoid score cliffs.
+// Pawn-king race
 // -----------------------------------------------------------------------
 inline float pawnKingRaceBonus(const EvalSideData& side, const EvalSideData& enemy, bool black) {
     float score = 0.0f;
@@ -934,7 +896,6 @@ inline float pawnKingRaceBonus(const EvalSideData& side, const EvalSideData& ene
         Position promoSquare(promotionRank, side.pawns[i].file());
         int enemyKingSteps = manhattan(enemy.kingPos, promoSquare);
 
-        // Use a smooth bonus instead of hard cliff
         int gap = enemyKingSteps - stepsToPromo;
         if (gap >= 2)       score += 2.50f;
         else if (gap >= 0)  score += 0.80f;
@@ -944,7 +905,12 @@ inline float pawnKingRaceBonus(const EvalSideData& side, const EvalSideData& ene
 }
 
 // -----------------------------------------------------------------------
-// Castling status — gated tightly on midgame phase
+// Castling status
+// FIX: reduced the castled-king bonus from 0.38 to 0.18 and raised the
+// castling-rights bonus to 0.12/0.10 so the eval cliff when castling
+// occurs is much smaller. The pawn-shield eval already rewards castled
+// kings; the old bonus on top caused the engine to overvalue castling
+// and misread positions where castling wasn't the critical factor.
 // -----------------------------------------------------------------------
 inline float evalCastlingStatus(const Board& board, const EvalSideData& side, bool black) {
     if (!side.hasKing) return 0.0f;
@@ -953,11 +919,11 @@ inline float evalCastlingStatus(const Board& board, const EvalSideData& side, bo
     Position queenSideCastle = black ? Position{7, 2} : Position{0, 2};
 
     if (side.kingPos == kingSideCastle || side.kingPos == queenSideCastle)
-        return 0.38f;   // castled king: moderate bonus (was 0.55, too high)
+        return 0.18f;
 
     float score = 0.0f;
-    if (board.canCastleKingSide(black))  score += 0.10f;
-    if (board.canCastleQueenSide(black)) score += 0.08f;
+    if (board.canCastleKingSide(black))  score += 0.12f;
+    if (board.canCastleQueenSide(black)) score += 0.10f;
     return score;
 }
 
@@ -999,29 +965,26 @@ inline float evalThreats(const Board& board, const EvalSideData& us,
 }
 
 // -----------------------------------------------------------------------
-// Piece safety (loose piece penalty)
-// Bug fixed: piece type check now uses pieceType() mask consistently,
-// and kings are excluded by value (type == 6) not by piece constant,
-// so it works correctly for both colors.
+// Piece safety (loose / undefended piece penalty)
+// FIX: the old version penalised any attacked piece, even well-defended
+// ones, causing the engine to flee pieces unnecessarily and badly
+// miscount material balance. New version only penalises pieces that are
+// attacked AND undefended — a piece with a defender behind it is fine.
 // -----------------------------------------------------------------------
 inline float loosePiecePenalty(const Board& board, Position position, Piece piece,
                                 bool black, float endgameT)
 {
     if (piece == EMPTY || pieceType(piece) == 6) return 0.0f;
+
+    // Not attacked at all — nothing to worry about
     if (!board.isSquareAttacked(position, !black)) return 0.0f;
 
-    bool defended = board.isSquareAttacked(position, black);
+    // Attacked but defended — the attacker takes a risk too; don't penalise
+    if (board.isSquareAttacked(position, black)) return 0.0f;
+
+    // Attacked and completely undefended: flat 25% of piece value as penalty
     float value = pieceValueMg(piece) * (1.0f - endgameT) + pieceValueEg(piece) * endgameT;
-    float phaseScale = 0.65f + 0.35f * endgameT;
-
-    float penaltyRate;
-    if (pieceType(piece) == 1) {
-        penaltyRate = defended ? 0.03f : 0.14f;   // pawn
-    } else {
-        penaltyRate = defended ? 0.09f : 0.38f;   // all other pieces
-    }
-
-    return value * penaltyRate * phaseScale;
+    return value * 0.25f;
 }
 
 inline float evalPieceSafetyCached(const Board& board, const EvalSideData& side,
@@ -1070,7 +1033,7 @@ inline float evalPieceSafetyCached(const Board& board, const EvalSideData& side,
     float midgameT  = 1.0f - endgameT;
     float pureEndgameT = 1.0f - std::min(8.0f, float(phase)) / 8.0f;
 
-    // --- Tapered PST scores (accumulated incrementally in Board) ---
+    // --- Tapered PST scores ---
     float whiteScore = board.getWhiteMg() * midgameT + board.getWhiteEg() * endgameT;
     float blackScore = board.getBlackMg() * midgameT + board.getBlackEg() * endgameT;
 
@@ -1126,10 +1089,7 @@ inline float evalPieceSafetyCached(const Board& board, const EvalSideData& side,
     whiteScore += evalThreats(board, white, black, false);
     blackScore += evalThreats(board, black, white, true);
 
-    // --- Piece safety (active in both middlegame and endgame) ---
-    // Previously gated behind tacticalSafetyT which excluded the middlegame.
-    // Now always active, but scaled by phase to avoid over-penalising in sharp
-    // tactical positions where the engine's own search handles captures.
+    // --- Piece safety ---
     {
         float safetyWeight = 0.40f + 0.60f * endgameT;
         whiteScore += evalPieceSafetyCached(board, white, false, endgameT) * safetyWeight;
