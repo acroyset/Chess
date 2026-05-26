@@ -631,9 +631,7 @@ private:
 
             board.move(move);
 
-            bool givesCheck     = board.check(board.getPlayerTurn());
-            int  moveExtension  = (inCheck || givesCheck) ? 1 : 0;
-            int  newDepth       = depth - 1 + moveExtension;
+            int newDepth = depth - 1 + (inCheck ? 1 : 0);
 
             // --- Late Move Reductions ---
             // Reduce more aggressively: start at move 2 (not 3), divide by 2.0 (not 3.0)
@@ -642,8 +640,7 @@ private:
                 depth >= 3          &&
                 !move.isCapture()   &&
                 !move.isPromotion() &&
-                !inCheck            &&
-                !givesCheck
+                !inCheck
             );
 
             if (doLMR) {
