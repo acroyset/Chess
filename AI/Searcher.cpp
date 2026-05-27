@@ -233,7 +233,7 @@ float Searcher::search(Board& board, int depth, float alpha, float beta, int ply
         if (entry.depth >= depth) {
             incrementTTLookups();
             if      (entry.flag == EXACT)      return ttEval;
-            else if (entry.flag == LOWERBOUND)  alpha = std::max(alpha, ttEval);
+            if (entry.flag == LOWERBOUND)  alpha = std::max(alpha, ttEval);
             else if (entry.flag == UPPERBOUND)  beta  = std::min(beta,  ttEval);
             if (alpha >= beta) return ttEval;
         }
@@ -242,7 +242,10 @@ float Searcher::search(Board& board, int depth, float alpha, float beta, int ply
     bool inCheck = board.check(board.getPlayerTurn());
 
     // --- Null move pruning ---
-    if (!inCheck && depth >= 3 && ply > 0 && beta < SEARCH_MATE_SCORE - 1000) {
+    if (!inCheck && depth >= 3 && ply > 0 &&
+        beta < SEARCH_MATE_SCORE - 1000 &&
+        alpha > -(SEARCH_MATE_SCORE - 1000))
+        {
         int phase = board.getEvalPhase();
         bool isEndgame = phase <= 4;
 

@@ -1169,15 +1169,18 @@ void Board::getPossibleCaptures(const Position position, MoveList& moves) const 
 }
 [[nodiscard]] bool Board::drawRepetition() const {
     uint64_t current = state.hash;
-    int count = 0;
-
-    // Check stack (search history)
+    int count = 1; // current position counts as 1
+    // Walk backwards, stopping at irreversible moves (captures/pawn moves reset lastPawnMoveOrCapture)
     for (int i = stackTop - 1; i >= 0; i--) {
-        if (stateStack[i].hash == current && ++count >= 2) return true;
+        if (stateStack[i].hash == current) {
+            if (++count >= 3) return true;
+        }
+        // Stop searching past an irreversible move
+        if (stateStack[i].lastPawnMoveOrCapture == 0) break;
     }
-    // Check root history (game history before search started)
+    // Check root game history
     for (auto h : rootHashes) {
-        if (h == current && ++count >= 2) return true;
+        if (h == current && ++count >= 3) return true;
     }
     return false;
 }

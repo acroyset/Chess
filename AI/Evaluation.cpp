@@ -883,11 +883,11 @@ float Evaluator::evalKingSafety(const Board& board, const EvalSideData& defender
             attackScore += 0.10f * float(hits);
             attackUnits += hits * 4;
             attackingPieces++;
+            // Proximity bonus only when the queen actually has lines to the king zone
+            int dist = manhattan(attacker.queens[i], defender.kingPos);
+            if (dist <= 2) attackScore += 0.18f;
+            else if (dist <= 3) attackScore += 0.08f;
         }
-        // Bonus for queen close to king regardless of zone
-        int dist = manhattan(attacker.queens[i], defender.kingPos);
-        if (dist <= 2) attackScore += 0.18f;
-        else if (dist <= 3) attackScore += 0.08f;
     }
 
     // ---- 5. Coordination bonus ----
@@ -1471,9 +1471,8 @@ float Evaluator::evaluate(const Board& board) {
     blackScore += evalThreats(board, black, white, true, whiteAttacks);
 
     // Piece safety — bitmask overload only
-    float safetyWeight = 0.25f + 0.40f * endgameT;
-    whiteScore += evalPieceSafetyCached(white, false, endgameT, whiteAttacks, blackAttacks) * safetyWeight;
-    blackScore += evalPieceSafetyCached(black, true,  endgameT, blackAttacks, whiteAttacks) * safetyWeight;
+    whiteScore += evalPieceSafetyCached(white, false, endgameT, whiteAttacks, blackAttacks);
+    blackScore += evalPieceSafetyCached(black, true,  endgameT, blackAttacks, whiteAttacks);
 
     whiteScore += endgameKingActivity(white.kingPos) * endgameT;
     blackScore += endgameKingActivity(black.kingPos) * endgameT;
