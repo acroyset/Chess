@@ -17,7 +17,7 @@
 
 #include <SFML/Graphics.hpp>
 #include "../AI/AIPlayer.h"
-#include "../Board.h"
+#include "../Game/Board.h"
 #include "StatusIconAtlas.h"
 
 inline std::string positionToNotation(Position position) {
@@ -219,7 +219,7 @@ public:
             pieceIcon.setTexture(pieceTexture);
         }
 
-        iconTextureLoaded = iconTexture.loadFromFile("icons.png");
+        iconTextureLoaded = iconTexture.loadFromFile("Render/icons.png");
         if (!iconTextureLoaded) {
             std::cerr << "Error loading status icon texture\n";
         } else {

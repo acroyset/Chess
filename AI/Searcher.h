@@ -14,8 +14,8 @@
 #include <array>
 #include <cmath>
 
-#include "../Board.h"
-#include "../BoardState.h"
+#include "../Game/Board.h"
+#include "../Game/BoardState.h"
 #include "TranspositionTable.h"
 #include "Evalutation.h"
 

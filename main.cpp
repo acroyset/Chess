@@ -7,7 +7,7 @@
 #include "Render/PieceDrawer.h"
 #include "Player.h"
 #include "Render/uiDrawer.h"
-#include "FenSaveLoader.h"
+#include "Game/FenSaveLoader.h"
 
 std::optional<Move> normalizeMove(Board& board, Move move) {
     MoveList legalMoves;
@@ -66,8 +66,8 @@ int main() {
     PieceDrawer pieceDrawer(tileSize, boardX);
     MoveDrawer moveDrawer(tileSize, boardX);
 
-    std::unique_ptr<Player> whitePlayer = std::make_unique<AIPlayer>(&searcher, 1.0f * 60.0f, 1.0f);
-    std::unique_ptr<Player> blackPlayer = std::make_unique<AIPlayer>(&searcher, 1.0f * 60.0f, 1.0f);
+    std::unique_ptr<Player> whitePlayer = std::make_unique<AIPlayer>(&searcher, 15.0f * 60.0f, 10.0f);
+    std::unique_ptr<Player> blackPlayer = std::make_unique<AIPlayer>(&searcher, 15.0f * 60.0f, 10.0f);
 
 
     bool blackAtBottom = false;

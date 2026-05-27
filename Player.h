@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <optional>
 #include <SFML/Graphics.hpp>
-#include "Board.h"
+#include "Game/Board.h"
 
 class Player {
 	bool timed;

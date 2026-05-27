@@ -10,7 +10,7 @@ find_package(SFML 3 REQUIRED COMPONENTS Graphics Window System)
 add_executable(Chess main.cpp
         AI/Searcher.cpp
         AI/Evaluation.cpp
-        Board.cpp
+        Game/Board.cpp
 )
 
 target_link_libraries(Chess

@@ -315,372 +315,120 @@ inline uint64_t kingZoneMask(Position king, bool blackKing) {
 
     return mask;
 }
-inline int countPawnKingZoneAttacks(Position from, bool black, uint64_t zone) {
-    int dir = black ? -1 : 1;
-    int r = from.rank(), f = from.file(), attacks = 0;
-    attacks += squareInMask(r + dir, f - 1, zone) ? 1 : 0;
-    attacks += squareInMask(r + dir, f + 1, zone) ? 1 : 0;
-    return attacks;
-}
-
-// -----------------------------------------------------------------------
-// Mobility
-// -----------------------------------------------------------------------
-inline float knightMobility(Position from, uint64_t ownPieces) {
-    int r = from.rank(), f = from.file(), count = 0;
-    for (const auto& o : knightOffsets) {
-        int nr = r + o[0], nf = f + o[1];
-        if (nr < 0 || nr >= 8 || nf < 0 || nf >= 8) continue;
-        if (!(ownPieces >> (nr * 8 + nf) & 1)) count++;
-    }
-    return float(count);
-}
-
-inline float slidingMobility(Position from, uint64_t occ, uint64_t ownPieces, const int dirs[][2], int numDirs){
-    int r = from.rank(), f = from.file(), count = 0;
-    for (int d = 0; d < numDirs; d++) {
-        int nr = r, nf = f;
-        for (int step = 1; step < 8; step++) {
-            nr += dirs[d][0]; nf += dirs[d][1];
-            if (nr < 0 || nr >= 8 || nf < 0 || nf >= 8) break;
-            int sq = nr * 8 + nf;
-            if (ownPieces >> sq & 1) break;
-            count++;
-            if (occ >> sq & 1) break;
-        }
-    }
-    return float(count);
-}
-
-// -----------------------------------------------------------------------
-// Pawn structure
-// -----------------------------------------------------------------------
-inline float evalPawnStructureCached(const EvalSideData& side, const EvalSideData& enemy, bool black, float endgameT)
-{
-    float score = 0.0f;
-
-    for (int i = 0; i < side.pawnCount; i++) {
-        Position p = side.pawns[i];
-        int r = p.rank(), f = p.file();
-        int advanceRank = black ? 7 - r : r;
-
-        // ---- Doubled pawns ----
-        if (side.pawnFiles[f] > 1)
-            score -= 0.10f * float(side.pawnFiles[f] - 1);
-
-        // ---- Isolated pawns ----
-        bool isolated = !(side.pawnFileMask & (
-            (f > 0 ? (1u << (f - 1)) : 0u) |
-            (f < 7 ? (1u << (f + 1)) : 0u)));
-        if (isolated)
-            score -= 0.14f;
-
-        // ---- Backward pawn ----
-        if (!isolated) {
-            bool hasSupportBehind = false;
-            for (int df = -1; df <= 1; df += 2) {
-                int ff = f + df;
-                if (ff < 0 || ff >= 8 || side.pawnFiles[ff] == 0) continue;
-                if (!black && side.pawnMinRank[ff] < r) { hasSupportBehind = true; break; }
-                if ( black && side.pawnMaxRank[ff] > r) { hasSupportBehind = true; break; }
-            }
-            if (!hasSupportBehind) {
-                int stopRank = black ? r - 1 : r + 1;
-                bool stopAttacked = false;
-                for (int df = -1; df <= 1; df += 2) {
-                    int ff = f + df;
-                    if (ff < 0 || ff >= 8 || enemy.pawnFiles[ff] == 0) continue;
-                    int attackRank = black ? stopRank + 1 : stopRank - 1;
-                    if (enemy.pawnMinRank[ff] <= attackRank && enemy.pawnMaxRank[ff] >= attackRank) {
-                        stopAttacked = true; break;
-                    }
-                }
-                if (stopAttacked) score -= 0.10f;
-            }
-        }
-
-        // ---- Passed pawn ----
-        bool passed = true;
-        for (int df = -1; df <= 1 && passed; df++) {
-            int ff = f + df;
-            if (ff < 0 || ff >= 8 || enemy.pawnFiles[ff] == 0) continue;
-            if (!black) {
-                if (enemy.pawnMaxRank[ff] > r) passed = false;
-            } else {
-                if (enemy.pawnMinRank[ff] < r) passed = false;
-            }
-        }
-
-        if (passed) {
-            static constexpr float passedBonus[8] = {
-                0.0f, 0.06f, 0.14f, 0.28f,
-                0.52f, 0.90f, 1.60f, 0.0f
-            };
-            float bonus = passedBonus[advanceRank];
-            bonus *= 1.0f + 1.8f * endgameT;
-            score += bonus;
-
-            if (advanceRank >= 5)
-                score += 0.14f * float(advanceRank - 4);
-        }
-    }
-
-    return score;
-}
-
-// -----------------------------------------------------------------------
-// Rooks: open/half-open files, seventh rank
-// -----------------------------------------------------------------------
-inline float evalRooksCached(const EvalSideData& side, const EvalSideData& enemy, bool black) {
-    float score = 0.0f;
-    int seventh = black ? 1 : 6;
-
-    for (int i = 0; i < side.rookCount; i++) {
-        int f = side.rooks[i].file();
-        bool ownPawn   = side.pawnFiles[f] > 0;
-        bool enemyPawn = enemy.pawnFiles[f] > 0;
-
-        if (!ownPawn && !enemyPawn) score += 0.28f;
-        else if (!ownPawn)          score += 0.14f;
-
-        if (side.rooks[i].rank() == seventh) score += 0.20f;
-    }
-
-    // Battery bonus
-    for (int i = 0; i < side.rookCount; i++) {
-        for (int j = i + 1; j < side.rookCount; j++) {
-            if (side.rooks[i].file() == side.rooks[j].file() ||
-                side.rooks[i].rank() == side.rooks[j].rank())
-                score += 0.18f;
-        }
-    }
-
-    return score;
-}
-inline float rookBehindPassedPawn(const EvalSideData& side, const EvalSideData& enemy, bool black) {
-    float score = 0.0f;
-    for (int i = 0; i < side.rookCount; i++) {
-        int rf = side.rooks[i].file(), rr = side.rooks[i].rank();
-        for (int j = 0; j < side.pawnCount; j++) {
-            if (side.pawns[j].file() != rf) continue;
-            int pr = side.pawns[j].rank();
-
-            bool passed = true;
-            for (int df = -1; df <= 1 && passed; df++) {
-                int ff = rf + df;
-                if (ff < 0 || ff >= 8 || enemy.pawnFiles[ff] == 0) continue;
-                if (!black && enemy.pawnMaxRank[ff] > pr) passed = false;
-                if ( black && enemy.pawnMinRank[ff] < pr) passed = false;
-            }
-            if (!passed) continue;
-
-            bool rookBehind = black ? rr > pr : rr < pr;
-            if (rookBehind) score += 0.30f;
-        }
-    }
-    return score;
-}
-
-// -----------------------------------------------------------------------
-// Space evaluation
-// -----------------------------------------------------------------------
-inline float evalSpace(const EvalSideData& side, bool black) {
-    float score = 0.0f;
-    for (int i = 0; i < side.pawnCount; i++) {
-        int advRank = black ? 7 - side.pawns[i].rank() : side.pawns[i].rank();
-        if (advRank >= 4) score += 0.06f * float(advRank - 3);
-    }
-    int oppHalfStart = black ? 0 : 4;
-    int oppHalfEnd   = black ? 3 : 7;
-    for (int i = 0; i < side.knightCount; i++) {
-        int r = side.knights[i].rank();
-        if (r >= oppHalfStart && r <= oppHalfEnd) score += 0.04f;
-    }
-    for (int i = 0; i < side.bishops; i++) {
-        int r = side.bishopSquares[i].rank();
-        if (r >= oppHalfStart && r <= oppHalfEnd) score += 0.04f;
-    }
-    return score;
-}
-
-// -----------------------------------------------------------------------
-// Outpost detection
-// -----------------------------------------------------------------------
-inline bool isOutpostSquare(int rank, int file, const EvalSideData& enemy, bool pieceIsBlack) {
-    for (int df = -1; df <= 1; df += 2) {
-        int ff = file + df;
-        if (ff < 0 || ff >= 8 || enemy.pawnFiles[ff] == 0) continue;
-        if (!pieceIsBlack) {
-            if (enemy.pawnMinRank[ff] < rank) return false;
-        } else {
-            if (enemy.pawnMaxRank[ff] > rank) return false;
-        }
-    }
-    return true;
-}
-
-inline bool isSupportedByPawn(int rank, int file, const EvalSideData& side, bool pieceIsBlack) {
-    int behindRank = pieceIsBlack ? rank + 1 : rank - 1;
-    for (int df = -1; df <= 1; df += 2) {
-        int ff = file + df;
-        if (ff < 0 || ff >= 8 || side.pawnFiles[ff] == 0) continue;
-        if (side.pawnMinRank[ff] <= behindRank && side.pawnMaxRank[ff] >= behindRank)
-            return true;
-    }
-    return false;
-}
-
-inline float evalOutposts(const EvalSideData& side, const EvalSideData& enemy, bool black, float midgameT) {
-    float score = 0.0f;
-    for (int i = 0; i < side.knightCount; i++) {
-        int r = side.knights[i].rank(), f = side.knights[i].file();
-        if (isOutpostSquare(r, f, enemy, black)) {
-            float bonus = 0.20f;
-            if (isSupportedByPawn(r, f, side, black)) bonus += 0.14f;
-            score += bonus * midgameT;
-        }
-    }
-    for (int i = 0; i < side.bishops; i++) {
-        int r = side.bishopSquares[i].rank(), f = side.bishopSquares[i].file();
-        if (isOutpostSquare(r, f, enemy, black) && isSupportedByPawn(r, f, side, black)) {
-            score += 0.10f * midgameT;
-        }
-    }
-    return score;
-}
-
-// SEE piece values (centipawns-ish, integers for speed)
-inline int seeValue(Piece piece) {
-    int idx = int(piece);
-    return idx >= 0 && idx < 16 ? SEE_VAL[idx] : 0;
-}
-
-// -----------------------------------------------------------------------
-// Insufficient material / draw heuristics
-// -----------------------------------------------------------------------
-inline float drawScaleFactor(const EvalSideData& white, const EvalSideData& black) {
-    // KK, KN vs K, KB vs K — all theoretical draws
-    if (white.rookCount == 0 && black.rookCount == 0 &&
-        white.queenCount == 0 && black.queenCount == 0 &&
-        white.pawnCount == 0 && black.pawnCount == 0)
-    {
-        int wMinors = white.knightCount + white.bishops;
-        int bMinors = black.knightCount + black.bishops;
-
-        if ((wMinors <= 1 && bMinors == 0) || (bMinors <= 1 && wMinors == 0))
-            return 0.0f;
-
-        // KNN vs K — generally a draw
-        if ((white.knightCount == 2 && white.bishops == 0 && bMinors == 0) ||
-            (black.knightCount == 2 && black.bishops == 0 && wMinors == 0))
-            return 0.05f;
-    }
-
-    return 1.0f;
-}
-
-// -----------------------------------------------------------------------
-// Endgame king activity
-// -----------------------------------------------------------------------
-inline float endgameKingActivity(Position king) {
-    int centerDist = std::min({
-        manhattan(king, Position(3, 3)),
-        manhattan(king, Position(3, 4)),
-        manhattan(king, Position(4, 3)),
-        manhattan(king, Position(4, 4))
-    });
-    return -0.09f * float(centerDist);
-}
-
-inline float kingSupportsPawns(const EvalSideData& side, const EvalSideData& enemy, bool black) {
-    float score = 0.0f;
-    for (int i = 0; i < side.pawnCount; i++) {
-        int promotionRank = black ? 0 : 7;
-        Position promo(promotionRank, side.pawns[i].file());
-        int ownDist   = manhattan(side.kingPos, side.pawns[i]);
-        int enemyDist = manhattan(enemy.kingPos, promo);
-        score += 0.05f * float(6 - std::min(6, ownDist));
-        score += 0.06f * float(enemyDist);
-    }
-    return score;
-}
-
-// -----------------------------------------------------------------------
-// Mop-up
-// -----------------------------------------------------------------------
-inline float mopUpEval(const EvalSideData& winning, const EvalSideData& losing, float advantage) {
-    if (!winning.hasKing || !losing.hasKing) return 0.0f;
-
-    int lf = losing.kingPos.file(), lr = losing.kingPos.rank();
-    int cornerDist = std::min(lf, 7 - lf) + std::min(lr, 7 - lr);
-    int kingDist   = manhattan(winning.kingPos, losing.kingPos);
-
-    float cornerPressure = 0.07f * float(6 - cornerDist);
-    float kingProximity  = 0.04f * float(14 - kingDist);
-
-    return advantage * (cornerPressure + kingProximity);
-}
-
-// -----------------------------------------------------------------------
-// Pawn-king race
-// -----------------------------------------------------------------------
-inline float pawnKingRaceBonus(const EvalSideData& side, const EvalSideData& enemy, bool black) {
-    float score = 0.0f;
-    for (int i = 0; i < side.pawnCount; i++) {
-        int promotionRank = black ? 0 : 7;
-        int stepsToPromo = black ? side.pawns[i].rank() : 7 - side.pawns[i].rank();
-        if (stepsToPromo <= 0) continue;
-
-        Position promoSquare(promotionRank, side.pawns[i].file());
-        int enemyKingSteps = manhattan(enemy.kingPos, promoSquare);
-
-        int gap = enemyKingSteps - stepsToPromo;
-        if (gap >= 2)       score += 2.50f;
-        else if (gap >= 0)  score += 0.80f;
-        else if (gap >= -1) score += 0.20f;
-    }
-    return score;
-}
-
-// -----------------------------------------------------------------------
-// Piece safety — now O(pieces) bitwise lookups, no ray scans.
-// -----------------------------------------------------------------------
-inline float evalPieceSafetyCached(const EvalSideData& side, bool black, float endgameT, uint64_t friendlyAttacks, uint64_t enemyAttacks) {
-    float penalty = 0.0f;
-    float safetyWeight = 0.25f + 0.40f * endgameT;
-
-    auto check = [&](Position pos, Piece piece) {
-        if (piece == EMPTY || (piece & 7) == 6) return; // skip kings
-        int sq = pos.index;
-        bool attacked  = (enemyAttacks   >> sq) & 1;
-        bool defended  = (friendlyAttacks >> sq) & 1;
-        if (!attacked) return;
-        if (defended)  return; // attacked but guarded — fine
-        float value = pieceValueMg(piece) * (1.0f - endgameT)
-                    + pieceValueEg(piece) * endgameT;
-        penalty += value * 0.40f * safetyWeight;
-    };
-
-    Piece pawn   = black ? BLACK_PAWN   : WHITE_PAWN;
-    Piece knight = black ? BLACK_KNIGHT : WHITE_KNIGHT;
-    Piece bishop = black ? BLACK_BISHOP : WHITE_BISHOP;
-    Piece rook   = black ? BLACK_ROOK   : WHITE_ROOK;
-    Piece queen  = black ? BLACK_QUEEN  : WHITE_QUEEN;
-
-    for (int i = 0; i < side.pawnCount;   i++) check(side.pawns[i],         pawn);
-    for (int i = 0; i < side.knightCount; i++) check(side.knights[i],       knight);
-    for (int i = 0; i < side.bishops;     i++) check(side.bishopSquares[i], bishop);
-    for (int i = 0; i < side.rookCount;   i++) check(side.rooks[i],         rook);
-    for (int i = 0; i < side.queenCount;  i++) check(side.queens[i],        queen);
-
-    return -penalty;
-}
 
 // -----------------------------------------------------------------------
 // Tempo / side-to-move bonus
 // -----------------------------------------------------------------------
 constexpr  float TEMPO_BONUS = 0.03f;
 
+
+float Evaluator::evaluate(const Board& board) {
+
+	EvalSideData white, black;
+
+    // Collect piece positions first (needed for buildAttackMask)
+    collectPawnData(board.getPieceBits(WHITE_PAWN), white);
+    collectPawnData(board.getPieceBits(BLACK_PAWN), black);
+
+    collectPiecePositions(board.getPieceBits(WHITE_ROOK),   white.rooks,         white.rookCount,   12);
+    collectPiecePositions(board.getPieceBits(BLACK_ROOK),   black.rooks,         black.rookCount,   12);
+    collectPiecePositions(board.getPieceBits(WHITE_KNIGHT), white.knights,       white.knightCount, 12);
+    collectPiecePositions(board.getPieceBits(BLACK_KNIGHT), black.knights,       black.knightCount, 12);
+    collectPiecePositions(board.getPieceBits(WHITE_BISHOP), white.bishopSquares, white.bishops,     12);
+    collectPiecePositions(board.getPieceBits(BLACK_BISHOP), black.bishopSquares, black.bishops,     12);
+    collectPiecePositions(board.getPieceBits(WHITE_QUEEN),  white.queens,        white.queenCount,  12);
+    collectPiecePositions(board.getPieceBits(BLACK_QUEEN),  black.queens,        black.queenCount,  12);
+
+    collectKingPosition(board.getPieceBits(WHITE_KING), white);
+    collectKingPosition(board.getPieceBits(BLACK_KING), black);
+
+    // Compute king zones first (needed by buildAttackData)
+    uint64_t whiteKingZone = kingZoneMask(white.kingPos, false);
+    uint64_t blackKingZone = kingZoneMask(black.kingPos, true);
+
+    // Single pass per side: attack mask + mobility + king zone hits
+    AttackData whiteAD = buildAttackData(board, white, false, blackKingZone);
+    AttackData blackAD = buildAttackData(board, black, true,  whiteKingZone);
+
+    uint64_t& whiteAttacks = whiteAD.mask;
+    uint64_t& blackAttacks = blackAD.mask;
+
+    // Phase interpolation
+    int phase = board.getEvalPhase();
+    float endgameT     = 1.0f - std::min(24.0f, float(phase)) / 24.0f;
+    float midgameT     = 1.0f - endgameT;
+    float pureEndgameT = 1.0f - std::min(8.0f,  float(phase)) / 8.0f;
+
+    float whiteScore = board.getWhiteMg() * midgameT + board.getWhiteEg() * endgameT;
+    float blackScore = board.getBlackMg() * midgameT + board.getBlackEg() * endgameT;
+
+    whiteScore += evalPawnStructureCached(white, black, false, endgameT);
+    blackScore += evalPawnStructureCached(black, white, true,  endgameT);
+
+    whiteScore += evalRooksCached(white, black, false);
+    blackScore += evalRooksCached(black, white, true);
+    whiteScore += rookBehindPassedPawn(white, black, false) * endgameT;
+    blackScore += rookBehindPassedPawn(black, white, true)  * endgameT;
+
+    if (white.bishops >= 2) whiteScore += 0.32f;
+    if (black.bishops >= 2) blackScore += 0.32f;
+
+    whiteScore += evalCenterCached(board, false) * midgameT;
+    blackScore += evalCenterCached(board, true)  * midgameT;
+
+    whiteScore += evalSpace(white, false) * midgameT;
+    blackScore += evalSpace(black, true)  * midgameT;
+
+    whiteScore += evalOutposts(white, black, false, midgameT, blackAttacks);
+    blackScore += evalOutposts(black, white, true,  midgameT, whiteAttacks);
+
+    whiteScore += evalKingSafety(white, black, false, midgameT, blackAD);
+    blackScore += evalKingSafety(black, white, true,  midgameT, whiteAD);
+
+    whiteScore += evalTrappedPieces(board, white, black, false, midgameT, blackAttacks);
+    blackScore += evalTrappedPieces(board, black, white, true,  midgameT, whiteAttacks);
+
+    // Threats — now using precomputed attack masks
+    whiteScore += evalThreats(board, white, black, false, blackAttacks);
+    blackScore += evalThreats(board, black, white, true, whiteAttacks);
+
+    // Piece safety — bitmask overload only
+    whiteScore += evalPieceSafetyCached(white, false, endgameT, whiteAttacks, blackAttacks);
+    blackScore += evalPieceSafetyCached(black, true,  endgameT, blackAttacks, whiteAttacks);
+
+    whiteScore += endgameKingActivity(white.kingPos) * endgameT;
+    blackScore += endgameKingActivity(black.kingPos) * endgameT;
+
+    whiteScore += kingSupportsPawns(white, black, false) * endgameT;
+    blackScore += kingSupportsPawns(black, white, true)  * endgameT;
+
+    float wMob = whiteAD.mobilityMg * midgameT + whiteAD.mobilityEg * endgameT;
+    float bMob = blackAD.mobilityMg * midgameT + blackAD.mobilityEg * endgameT;
+    whiteScore += wMob;
+    blackScore += bMob;
+
+    float materialDiff = whiteScore - blackScore;
+    if (std::abs(materialDiff) > 1.2f) {
+        bool whiteWinning = materialDiff > 0;
+        float mopUp = mopUpEval(
+            whiteWinning ? white : black,
+            whiteWinning ? black : white,
+            std::min(std::abs(materialDiff), 5.0f)
+        ) * pureEndgameT;
+        if (whiteWinning) whiteScore += mopUp;
+        else              blackScore += mopUp;
+    }
+
+    whiteScore += pawnKingRaceBonus(white, black, false) * endgameT;
+    blackScore += pawnKingRaceBonus(black, white, true)  * endgameT;
+
+    float scale = drawScaleFactor(white, black);
+    float eval  = (whiteScore - blackScore) * scale;
+
+    eval += board.getPlayerTurn() ? -TEMPO_BONUS : TEMPO_BONUS;
+
+    return board.getPlayerTurn() ? -eval : eval;
+}
 
 Piece Evaluator::evalPieceAt(const Board& board, int rank, int file) {
     if (rank < 0 || rank >= 8 || file < 0 || file >= 8) return EMPTY;
@@ -697,73 +445,7 @@ Piece Evaluator::evalPieceAtBB(const Board& board, int sq) {
     return EMPTY;
 }
 
-float Evaluator::evalMobilityCached(const Board& board, const EvalSideData& white, const EvalSideData& black, float midgameT, float endgameT) {
-    uint64_t whiteOcc = 0, blackOcc = 0;
-    for (int p = 1; p <= 6; p++)  whiteOcc |= board.getPieceBits(static_cast<Piece>(p));
-    for (int p = 9; p <= 14; p++) blackOcc |= board.getPieceBits(static_cast<Piece>(p));
-    uint64_t allOcc = whiteOcc | blackOcc;
-
-    constexpr float KNIGHT_MOB_MG = 0.042f, KNIGHT_MOB_EG = 0.040f;
-    constexpr float BISHOP_MOB_MG = 0.040f, BISHOP_MOB_EG = 0.042f;
-    constexpr float ROOK_MOB_MG   = 0.024f, ROOK_MOB_EG   = 0.040f;
-    constexpr float QUEEN_MOB_MG  = 0.010f, QUEEN_MOB_EG  = 0.020f;
-
-    float wScore = 0.0f, bScore = 0.0f;
-
-    for (int i = 0; i < white.knightCount; i++)
-        wScore += knightMobility(white.knights[i], whiteOcc) * (KNIGHT_MOB_MG * midgameT + KNIGHT_MOB_EG * endgameT);
-    for (int i = 0; i < black.knightCount; i++)
-        bScore += knightMobility(black.knights[i], blackOcc) * (KNIGHT_MOB_MG * midgameT + KNIGHT_MOB_EG * endgameT);
-
-    for (int i = 0; i < white.bishops; i++)
-        wScore += slidingMobility(white.bishopSquares[i], allOcc, whiteOcc, bishopDirections, 4)
-                  * (BISHOP_MOB_MG * midgameT + BISHOP_MOB_EG * endgameT);
-    for (int i = 0; i < black.bishops; i++)
-        bScore += slidingMobility(black.bishopSquares[i], allOcc, blackOcc, bishopDirections, 4)
-                  * (BISHOP_MOB_MG * midgameT + BISHOP_MOB_EG * endgameT);
-
-    for (int i = 0; i < white.rookCount; i++)
-        wScore += slidingMobility(white.rooks[i], allOcc, whiteOcc, rookDirections, 4)
-                  * (ROOK_MOB_MG * midgameT + ROOK_MOB_EG * endgameT);
-    for (int i = 0; i < black.rookCount; i++)
-        bScore += slidingMobility(black.rooks[i], allOcc, blackOcc, rookDirections, 4)
-                  * (ROOK_MOB_MG * midgameT + ROOK_MOB_EG * endgameT);
-
-    for (int i = 0; i < white.queenCount; i++)
-        wScore += slidingMobility(white.queens[i], allOcc, whiteOcc, queenDirections, 8)
-                  * (QUEEN_MOB_MG * midgameT + QUEEN_MOB_EG * endgameT);
-    for (int i = 0; i < black.queenCount; i++)
-        bScore += slidingMobility(black.queens[i], allOcc, blackOcc, queenDirections, 8)
-                  * (QUEEN_MOB_MG * midgameT + QUEEN_MOB_EG * endgameT);
-
-    return wScore - bScore;
-}
-
-template <size_t N>
-int Evaluator::countSlidingKingZoneAttacks(const Board& board, Position from, const int (&directions)[N][2], uint64_t zone){
-    int attacks = 0, sr = from.rank(), sf = from.file();
-    for (const auto& direction : directions) {
-        int rank = sr, file = sf;
-        for (int d = 1; d < 8; d++) {
-            rank += direction[0]; file += direction[1];
-            if (rank < 0 || rank >= 8 || file < 0 || file >= 8) break;
-            int idx = rank * 8 + file;
-            bool inZone = (zone & (1ULL << idx)) != 0;
-            Piece piece = evalPieceAt(board, rank, file);
-
-            if (piece != EMPTY) {
-                // The blocking piece itself may be inside the zone — count it,
-                // then stop: nothing behind a blocker can attack through it.
-                if (inZone) attacks++;
-                break;
-            }
-            if (inZone) attacks++;
-        }
-    }
-    return attacks;
-}
-
-float Evaluator::evalKingSafety(const Board& board, const EvalSideData& defender, const EvalSideData& attacker, bool defenderBlack, float midgameT){
+float Evaluator::evalKingSafety(const EvalSideData& defender, const EvalSideData& attacker, bool defenderBlack, float midgameT, const AttackData& attackerData){
     if (!defender.hasKing || midgameT < 0.05f) return 0.0f;
 
     float score = 0.0f;
@@ -827,18 +509,13 @@ float Evaluator::evalKingSafety(const Board& board, const EvalSideData& defender
     uint64_t zone = kingZoneMask(defender.kingPos, defenderBlack);
 
     float attackScore = 0.0f;
-    int attackingPieces = 0;
-    int attackUnits = 0;
 
     // Pawns
-    {
-        int pawnAttacks = 0;
-        for (int i = 0; i < attacker.pawnCount; i++)
-            pawnAttacks += countPawnKingZoneAttacks(attacker.pawns[i], !defenderBlack, zone);
-        if (pawnAttacks > 0) {
-            attackScore += 0.04f * float(pawnAttacks);
-            attackUnits += pawnAttacks;
-        }
+    int pawnAttacks = 0;
+    for (int i = 0; i < attacker.pawnCount; i++)
+        pawnAttacks += countPawnKingZoneAttacks(attacker.pawns[i], !defenderBlack, zone);
+    if (pawnAttacks > 0) {
+        attackScore += 0.04f * float(pawnAttacks);
     }
 
     // Knights
@@ -851,39 +528,30 @@ float Evaluator::evalKingSafety(const Board& board, const EvalSideData& defender
         }
         if (hits > 0) {
             attackScore += 0.10f * float(hits);
-            attackUnits += hits * 2;
-            attackingPieces++;
         }
     }
 
     // Bishops
     for (int i = 0; i < attacker.bishops; i++) {
-        int hits = countSlidingKingZoneAttacks(board, attacker.bishopSquares[i], bishopDirections, zone);
+        int hits = attackerData.kingZoneHits[3];
         if (hits > 0) {
             attackScore += 0.08f * float(hits);
-            attackUnits += hits * 2;
-            attackingPieces++;
         }
     }
 
     // Rooks
     for (int i = 0; i < attacker.rookCount; i++) {
-        int hits = countSlidingKingZoneAttacks(board, attacker.rooks[i], rookDirections, zone);
+        int hits = attackerData.kingZoneHits[4];
         if (hits > 0) {
             attackScore += 0.14f * float(hits);
-            attackUnits += hits * 3;
-            attackingPieces++;
         }
     }
 
     // Queens — queen near king is especially dangerous
-    for (int i = 0; i < attacker.queenCount; i++) {
-        int hits = countSlidingKingZoneAttacks(board, attacker.queens[i], queenDirections, zone);
-        if (hits > 0) {
-            attackScore += 0.10f * float(hits);
-            attackUnits += hits * 4;
-            attackingPieces++;
-            // Proximity bonus only when the queen actually has lines to the king zone
+    int hits = attackerData.kingZoneHits[5];
+    if (hits > 0) {
+        attackScore += 0.10f * float(hits);
+        for (int i = 0; i < attacker.queenCount; i++) {
             int dist = manhattan(attacker.queens[i], defender.kingPos);
             if (dist <= 2) attackScore += 0.18f;
             else if (dist <= 3) attackScore += 0.08f;
@@ -892,14 +560,14 @@ float Evaluator::evalKingSafety(const Board& board, const EvalSideData& defender
 
     // ---- 5. Coordination bonus ----
     // Multiple attackers are exponentially more dangerous
-    if (attackingPieces >= 2) {
-        attackScore *= 1.0f + 0.25f * float(attackingPieces - 1);
+    if (attackerData.kingZonePieces >= 2) {
+        attackScore *= 1.0f + 0.25f * float(attackerData.kingZonePieces - 1);
     }
 
     // ---- 6. Remove the bad "gate" — any 2+ pieces threatening king is real ----
     // Only apply a mild reduction if there's truly no heavy attacker AND only 1 piece
     bool hasHeavy = attacker.queenCount > 0 || attacker.rookCount > 0;
-    if (!hasHeavy && attackingPieces < 2) attackScore *= 0.40f;
+    if (!hasHeavy && attackerData.kingZonePieces < 2) attackScore *= 0.40f;
 
     // ---- 7. Defender's piece count around king ----
     // Fewer defenders near king = more danger
@@ -945,7 +613,7 @@ float Evaluator::evalCenterCached(const Board& board, bool black) {
     return score;
 }
 
-float Evaluator::evalTrappedPieces(const Board& board, const EvalSideData& side, const EvalSideData& enemy, bool black, float midgameT) {
+float Evaluator::evalTrappedPieces(const Board& board, const EvalSideData& side, const EvalSideData& enemy, bool black, float midgameT, uint64_t enemyAllAttacks) {
     float penalty = 0.0f;
 
     // Build enemy pawn attack mask
@@ -977,10 +645,11 @@ float Evaluator::evalTrappedPieces(const Board& board, const EvalSideData& side,
             int sq = nr * 8 + nf;
             if ((ownOcc >> sq & 1)) continue;          // occupied by own piece
             if ((enemyPawnAttacks >> sq & 1)) continue; // controlled by enemy pawn
+            if ((enemyAllAttacks >> sq & 1)) continue;
             safeMoves++;
         }
-        if      (safeMoves == 0) penalty += 0.60f;
-        else if (safeMoves == 1) penalty += 0.20f;
+        if (safeMoves == 0) penalty += 1.20f;
+        if (safeMoves == 1) penalty += 0.35f;
     }
 
     // Bishops: count safe diagonal squares (first square in each direction)
@@ -995,8 +664,8 @@ float Evaluator::evalTrappedPieces(const Board& board, const EvalSideData& side,
             if ((enemyPawnAttacks >> sq & 1)) continue;
             safeMoves++;
         }
-        if      (safeMoves == 0) penalty += 0.65f;
-        else if (safeMoves == 1) penalty += 0.22f;
+        if (safeMoves == 0) penalty += 1.30f;
+        if (safeMoves == 1) penalty += 0.4f;
     }
 
     // Rooks: trapped behind own pawns on closed files
@@ -1319,190 +988,464 @@ float Evaluator::evalThreats(const Board& board, const EvalSideData& us, const E
     return score;
 }
 
-uint64_t Evaluator::buildAttackMask(const Board& board, const EvalSideData& side, bool black) {
-    uint64_t occ = 0;
-    for (int p = 1; p <= 14; p++) {
-        if (p == 7 || p == 8) continue;
-        occ |= board.getPieceBits(static_cast<Piece>(p));
-    }
+AttackData Evaluator::buildAttackData(const Board& board, const EvalSideData& side, bool black, uint64_t enemyKingZone) {
+    AttackData out;
 
-    uint64_t attacks = 0;
+    uint64_t ownOcc = 0, allOcc = 0;
+    for (int p = 1;  p <= 6;  p++) ownOcc |= board.getPieceBits(static_cast<Piece>(p));
+    for (int p = 9;  p <= 14; p++) ownOcc |= board.getPieceBits(static_cast<Piece>(p));
+    // rebuild cleanly
+    uint64_t whiteOcc = 0, blackOcc = 0;
+    for (int p = 1; p <= 6;  p++) whiteOcc |= board.getPieceBits(static_cast<Piece>(p));
+    for (int p = 9; p <= 14; p++) blackOcc |= board.getPieceBits(static_cast<Piece>(p));
+    ownOcc = black ? blackOcc : whiteOcc;
+    allOcc = whiteOcc | blackOcc;
 
-    // Pawns
-    for (int i = 0; i < side.pawnCount; i++) {
-        int r = side.pawns[i].rank(), f = side.pawns[i].file();
+    constexpr float KNIGHT_MOB_MG = 0.042f, KNIGHT_MOB_EG = 0.040f;
+    constexpr float BISHOP_MOB_MG = 0.040f, BISHOP_MOB_EG = 0.042f;
+    constexpr float ROOK_MOB_MG   = 0.024f, ROOK_MOB_EG   = 0.040f;
+    constexpr float QUEEN_MOB_MG  = 0.010f, QUEEN_MOB_EG  = 0.020f;
+
+    // --- Pawns ---
+    {
         int dir = black ? -1 : 1;
-        for (int df : {-1, 1}) {
-            int nr = r + dir, nf = f + df;
-            if (nr >= 0 && nr < 8 && nf >= 0 && nf < 8)
-                attacks |= 1ULL << (nr * 8 + nf);
+        for (int i = 0; i < side.pawnCount; i++) {
+            int r = side.pawns[i].rank(), f = side.pawns[i].file();
+            for (int df : {-1, 1}) {
+                int nr = r + dir, nf = f + df;
+                if (nr < 0 || nr >= 8 || nf < 0 || nf >= 8) continue;
+                int sq = nr * 8 + nf;
+                out.mask |= 1ULL << sq;
+                if ((enemyKingZone >> sq) & 1) out.kingZoneHits[1]++;
+            }
         }
     }
 
-    // Knights
+    // --- Knights ---
     for (int i = 0; i < side.knightCount; i++) {
         int r = side.knights[i].rank(), f = side.knights[i].file();
+        int mob = 0;
+        bool hitsZone = false;
         for (const auto& o : knightOffsets) {
             int nr = r + o[0], nf = f + o[1];
-            if (nr >= 0 && nr < 8 && nf >= 0 && nf < 8)
-                attacks |= 1ULL << (nr * 8 + nf);
+            if (nr < 0 || nr >= 8 || nf < 0 || nf >= 8) continue;
+            int sq = nr * 8 + nf;
+            out.mask |= 1ULL << sq;
+            if ((enemyKingZone >> sq) & 1) { out.kingZoneHits[2]++; hitsZone = true; }
+            if (!((ownOcc >> sq) & 1)) mob++;
         }
+        out.mobilityMg += float(mob) * KNIGHT_MOB_MG;
+        out.mobilityEg += float(mob) * KNIGHT_MOB_EG;
+        if (hitsZone) out.kingZonePieces++;
     }
 
-    // Bishops (diagonal rays)
+    // --- Bishops ---
     for (int i = 0; i < side.bishops; i++) {
         int r = side.bishopSquares[i].rank(), f = side.bishopSquares[i].file();
+        int mob = 0;
+        bool hitsZone = false;
         for (const auto& d : bishopDirections) {
             int nr = r, nf = f;
             for (int step = 1; step < 8; step++) {
                 nr += d[0]; nf += d[1];
                 if (nr < 0 || nr >= 8 || nf < 0 || nf >= 8) break;
                 int sq = nr * 8 + nf;
-                attacks |= 1ULL << sq;
-                if (occ >> sq & 1) break; // blocked
+                out.mask |= 1ULL << sq;
+                if ((enemyKingZone >> sq) & 1) { out.kingZoneHits[3]++; hitsZone = true; }
+                if (!((ownOcc >> sq) & 1)) mob++;
+                if ((allOcc >> sq) & 1) break;
             }
         }
+        out.mobilityMg += float(mob) * BISHOP_MOB_MG;
+        out.mobilityEg += float(mob) * BISHOP_MOB_EG;
+        if (hitsZone) out.kingZonePieces++;
     }
 
-    // Rooks (orthogonal rays)
+    // --- Rooks ---
     for (int i = 0; i < side.rookCount; i++) {
         int r = side.rooks[i].rank(), f = side.rooks[i].file();
+        int mob = 0;
+        bool hitsZone = false;
         for (const auto& d : rookDirections) {
             int nr = r, nf = f;
             for (int step = 1; step < 8; step++) {
                 nr += d[0]; nf += d[1];
                 if (nr < 0 || nr >= 8 || nf < 0 || nf >= 8) break;
                 int sq = nr * 8 + nf;
-                attacks |= 1ULL << sq;
-                if (occ >> sq & 1) break;
+                out.mask |= 1ULL << sq;
+                if ((enemyKingZone >> sq) & 1) { out.kingZoneHits[4]++; hitsZone = true; }
+                if (!((ownOcc >> sq) & 1)) mob++;
+                if ((allOcc >> sq) & 1) break;
             }
         }
+        out.mobilityMg += float(mob) * ROOK_MOB_MG;
+        out.mobilityEg += float(mob) * ROOK_MOB_EG;
+        if (hitsZone) out.kingZonePieces++;
     }
 
-    // Queens (all 8 directions)
+    // --- Queens ---
     for (int i = 0; i < side.queenCount; i++) {
         int r = side.queens[i].rank(), f = side.queens[i].file();
+        int mob = 0;
+        bool hitsZone = false;
         for (const auto& d : queenDirections) {
             int nr = r, nf = f;
             for (int step = 1; step < 8; step++) {
                 nr += d[0]; nf += d[1];
                 if (nr < 0 || nr >= 8 || nf < 0 || nf >= 8) break;
                 int sq = nr * 8 + nf;
-                attacks |= 1ULL << sq;
-                if (occ >> sq & 1) break;
+                out.mask |= 1ULL << sq;
+                if ((enemyKingZone >> sq) & 1) { out.kingZoneHits[5]++; hitsZone = true; }
+                if (!((ownOcc >> sq) & 1)) mob++;
+                if ((allOcc >> sq) & 1) break;
             }
         }
+        out.mobilityMg += float(mob) * QUEEN_MOB_MG;
+        out.mobilityEg += float(mob) * QUEEN_MOB_EG;
+        if (hitsZone) out.kingZonePieces++;
     }
 
-    // King
+    // --- King ---
     if (side.hasKing) {
         int r = side.kingPos.rank(), f = side.kingPos.file();
         for (const auto& o : kingOffsets) {
             int nr = r + o[0], nf = f + o[1];
             if (nr >= 0 && nr < 8 && nf >= 0 && nf < 8)
-                attacks |= 1ULL << (nr * 8 + nf);
+                out.mask |= 1ULL << (nr * 8 + nf);
         }
     }
 
+    return out;
+}
+
+int Evaluator::countPawnKingZoneAttacks(Position from, bool black, uint64_t zone) {
+    int dir = black ? -1 : 1;
+    int r = from.rank(), f = from.file(), attacks = 0;
+    attacks += squareInMask(r + dir, f - 1, zone) ? 1 : 0;
+    attacks += squareInMask(r + dir, f + 1, zone) ? 1 : 0;
     return attacks;
 }
 
-float Evaluator::evaluate(const Board& board) {
+float Evaluator::knightMobility(Position from, uint64_t ownPieces) {
+    int r = from.rank(), f = from.file(), count = 0;
+    for (const auto& o : knightOffsets) {
+        int nr = r + o[0], nf = f + o[1];
+        if (nr < 0 || nr >= 8 || nf < 0 || nf >= 8) continue;
+        if (!(ownPieces >> (nr * 8 + nf) & 1)) count++;
+    }
+    return float(count);
+}
 
-	EvalSideData white, black;
+float Evaluator::slidingMobility(Position from, uint64_t occ, uint64_t ownPieces, const int dirs[][2], int numDirs){
+    int r = from.rank(), f = from.file(), count = 0;
+    for (int d = 0; d < numDirs; d++) {
+        int nr = r, nf = f;
+        for (int step = 1; step < 8; step++) {
+            nr += dirs[d][0]; nf += dirs[d][1];
+            if (nr < 0 || nr >= 8 || nf < 0 || nf >= 8) break;
+            int sq = nr * 8 + nf;
+            if (ownPieces >> sq & 1) break;
+            count++;
+            if (occ >> sq & 1) break;
+        }
+    }
+    return float(count);
+}
 
-    // Collect piece positions first (needed for buildAttackMask)
-    collectPawnData(board.getPieceBits(WHITE_PAWN), white);
-    collectPawnData(board.getPieceBits(BLACK_PAWN), black);
+float Evaluator::evalPawnStructureCached(const EvalSideData& side, const EvalSideData& enemy, bool black, float endgameT)
+{
+    float score = 0.0f;
 
-    collectPiecePositions(board.getPieceBits(WHITE_ROOK),   white.rooks,         white.rookCount,   12);
-    collectPiecePositions(board.getPieceBits(BLACK_ROOK),   black.rooks,         black.rookCount,   12);
-    collectPiecePositions(board.getPieceBits(WHITE_KNIGHT), white.knights,       white.knightCount, 12);
-    collectPiecePositions(board.getPieceBits(BLACK_KNIGHT), black.knights,       black.knightCount, 12);
-    collectPiecePositions(board.getPieceBits(WHITE_BISHOP), white.bishopSquares, white.bishops,     12);
-    collectPiecePositions(board.getPieceBits(BLACK_BISHOP), black.bishopSquares, black.bishops,     12);
-    collectPiecePositions(board.getPieceBits(WHITE_QUEEN),  white.queens,        white.queenCount,  12);
-    collectPiecePositions(board.getPieceBits(BLACK_QUEEN),  black.queens,        black.queenCount,  12);
+    for (int i = 0; i < side.pawnCount; i++) {
+        Position p = side.pawns[i];
+        int r = p.rank(), f = p.file();
+        int advanceRank = black ? 7 - r : r;
 
-    collectKingPosition(board.getPieceBits(WHITE_KING), white);
-    collectKingPosition(board.getPieceBits(BLACK_KING), black);
+        // ---- Doubled pawns ----
+        if (side.pawnFiles[f] > 1)
+            score -= 0.10f * float(side.pawnFiles[f] - 1);
 
-    // Build attack masks after piece data is collected
-    uint64_t whiteAttacks = buildAttackMask(board, white, false);
-    uint64_t blackAttacks = buildAttackMask(board,black, true);
+        // ---- Isolated pawns ----
+        bool isolated = !(side.pawnFileMask & (
+            (f > 0 ? (1u << (f - 1)) : 0u) |
+            (f < 7 ? (1u << (f + 1)) : 0u)));
+        if (isolated)
+            score -= 0.14f;
 
-    // Phase interpolation
-    int phase = board.getEvalPhase();
-    float endgameT     = 1.0f - std::min(24.0f, float(phase)) / 24.0f;
-    float midgameT     = 1.0f - endgameT;
-    float pureEndgameT = 1.0f - std::min(8.0f,  float(phase)) / 8.0f;
+        // ---- Backward pawn ----
+        if (!isolated) {
+            bool hasSupportBehind = false;
+            for (int df = -1; df <= 1; df += 2) {
+                int ff = f + df;
+                if (ff < 0 || ff >= 8 || side.pawnFiles[ff] == 0) continue;
+                if (!black && side.pawnMinRank[ff] < r) { hasSupportBehind = true; break; }
+                if ( black && side.pawnMaxRank[ff] > r) { hasSupportBehind = true; break; }
+            }
+            if (!hasSupportBehind) {
+                int stopRank = black ? r - 1 : r + 1;
+                bool stopAttacked = false;
+                for (int df = -1; df <= 1; df += 2) {
+                    int ff = f + df;
+                    if (ff < 0 || ff >= 8 || enemy.pawnFiles[ff] == 0) continue;
+                    int attackRank = black ? stopRank + 1 : stopRank - 1;
+                    if (enemy.pawnMinRank[ff] <= attackRank && enemy.pawnMaxRank[ff] >= attackRank) {
+                        stopAttacked = true; break;
+                    }
+                }
+                if (stopAttacked) score -= 0.10f;
+            }
+        }
 
-    float whiteScore = board.getWhiteMg() * midgameT + board.getWhiteEg() * endgameT;
-    float blackScore = board.getBlackMg() * midgameT + board.getBlackEg() * endgameT;
+        // ---- Passed pawn ----
+        bool passed = true;
+        for (int df = -1; df <= 1 && passed; df++) {
+            int ff = f + df;
+            if (ff < 0 || ff >= 8 || enemy.pawnFiles[ff] == 0) continue;
+            if (!black) {
+                if (enemy.pawnMaxRank[ff] > r) passed = false;
+            } else {
+                if (enemy.pawnMinRank[ff] < r) passed = false;
+            }
+        }
 
-    whiteScore += evalPawnStructureCached(white, black, false, endgameT);
-    blackScore += evalPawnStructureCached(black, white, true,  endgameT);
+        if (passed) {
+            static constexpr float passedBonus[8] = {
+                0.0f, 0.06f, 0.14f, 0.28f,
+                0.52f, 0.90f, 1.60f, 0.0f
+            };
+            float bonus = passedBonus[advanceRank];
+            bonus *= 1.0f + 1.8f * endgameT;
+            score += bonus;
 
-    whiteScore += evalRooksCached(white, black, false);
-    blackScore += evalRooksCached(black, white, true);
-    whiteScore += rookBehindPassedPawn(white, black, false) * endgameT;
-    blackScore += rookBehindPassedPawn(black, white, true)  * endgameT;
-
-    if (white.bishops >= 2) whiteScore += 0.32f;
-    if (black.bishops >= 2) blackScore += 0.32f;
-
-    whiteScore += evalCenterCached(board, false) * midgameT;
-    blackScore += evalCenterCached(board, true)  * midgameT;
-
-    whiteScore += evalSpace(white, false) * midgameT;
-    blackScore += evalSpace(black, true)  * midgameT;
-
-    whiteScore += evalOutposts(white, black, false, midgameT);
-    blackScore += evalOutposts(black, white, true,  midgameT);
-
-    whiteScore += evalKingSafety(board, white, black, false, midgameT);
-    blackScore += evalKingSafety(board, black, white, true,  midgameT);
-
-    whiteScore += evalTrappedPieces(board, white, black, false, midgameT);
-    blackScore += evalTrappedPieces(board, black, white, true,  midgameT);
-
-    // Threats — now using precomputed attack masks
-    whiteScore += evalThreats(board, white, black, false, blackAttacks);
-    blackScore += evalThreats(board, black, white, true, whiteAttacks);
-
-    // Piece safety — bitmask overload only
-    whiteScore += evalPieceSafetyCached(white, false, endgameT, whiteAttacks, blackAttacks);
-    blackScore += evalPieceSafetyCached(black, true,  endgameT, blackAttacks, whiteAttacks);
-
-    whiteScore += endgameKingActivity(white.kingPos) * endgameT;
-    blackScore += endgameKingActivity(black.kingPos) * endgameT;
-
-    whiteScore += kingSupportsPawns(white, black, false) * endgameT;
-    blackScore += kingSupportsPawns(black, white, true)  * endgameT;
-
-    float mobilityDiff = evalMobilityCached(board, white, black, midgameT, endgameT);
-    whiteScore += mobilityDiff > 0.0f ?  mobilityDiff : 0.0f;
-    blackScore += mobilityDiff < 0.0f ? -mobilityDiff : 0.0f;
-
-    float materialDiff = whiteScore - blackScore;
-    if (std::abs(materialDiff) > 1.2f) {
-        bool whiteWinning = materialDiff > 0;
-        float mopUp = mopUpEval(
-            whiteWinning ? white : black,
-            whiteWinning ? black : white,
-            std::min(std::abs(materialDiff), 5.0f)
-        ) * pureEndgameT;
-        if (whiteWinning) whiteScore += mopUp;
-        else              blackScore += mopUp;
+            if (advanceRank >= 5)
+                score += 0.14f * float(advanceRank - 4);
+        }
     }
 
-    whiteScore += pawnKingRaceBonus(white, black, false) * endgameT;
-    blackScore += pawnKingRaceBonus(black, white, true)  * endgameT;
+    return score;
+}
 
-    float scale = drawScaleFactor(white, black);
-    float eval  = (whiteScore - blackScore) * scale;
+float Evaluator::evalRooksCached(const EvalSideData& side, const EvalSideData& enemy, bool black) {
+    float score = 0.0f;
+    int seventh = black ? 1 : 6;
 
-    eval += board.getPlayerTurn() ? -TEMPO_BONUS : TEMPO_BONUS;
+    for (int i = 0; i < side.rookCount; i++) {
+        int f = side.rooks[i].file();
+        bool ownPawn   = side.pawnFiles[f] > 0;
+        bool enemyPawn = enemy.pawnFiles[f] > 0;
 
-    return board.getPlayerTurn() ? -eval : eval;
+        if (!ownPawn && !enemyPawn) score += 0.28f;
+        else if (!ownPawn)          score += 0.14f;
+
+        if (side.rooks[i].rank() == seventh) score += 0.20f;
+    }
+
+    // Battery bonus
+    for (int i = 0; i < side.rookCount; i++) {
+        for (int j = i + 1; j < side.rookCount; j++) {
+            if (side.rooks[i].file() == side.rooks[j].file() ||
+                side.rooks[i].rank() == side.rooks[j].rank())
+                score += 0.18f;
+        }
+    }
+
+    return score;
+}
+float Evaluator::rookBehindPassedPawn(const EvalSideData& side, const EvalSideData& enemy, bool black) {
+    float score = 0.0f;
+    for (int i = 0; i < side.rookCount; i++) {
+        int rf = side.rooks[i].file(), rr = side.rooks[i].rank();
+        for (int j = 0; j < side.pawnCount; j++) {
+            if (side.pawns[j].file() != rf) continue;
+            int pr = side.pawns[j].rank();
+
+            bool passed = true;
+            for (int df = -1; df <= 1 && passed; df++) {
+                int ff = rf + df;
+                if (ff < 0 || ff >= 8 || enemy.pawnFiles[ff] == 0) continue;
+                if (!black && enemy.pawnMaxRank[ff] > pr) passed = false;
+                if ( black && enemy.pawnMinRank[ff] < pr) passed = false;
+            }
+            if (!passed) continue;
+
+            bool rookBehind = black ? rr > pr : rr < pr;
+            if (rookBehind) score += 0.30f;
+        }
+    }
+    return score;
+}
+
+float Evaluator::evalSpace(const EvalSideData& side, bool black) {
+    float score = 0.0f;
+    for (int i = 0; i < side.pawnCount; i++) {
+        int advRank = black ? 7 - side.pawns[i].rank() : side.pawns[i].rank();
+        if (advRank >= 4) score += 0.06f * float(advRank - 3);
+    }
+    int oppHalfStart = black ? 0 : 4;
+    int oppHalfEnd   = black ? 3 : 7;
+    for (int i = 0; i < side.knightCount; i++) {
+        int r = side.knights[i].rank();
+        if (r >= oppHalfStart && r <= oppHalfEnd) score += 0.04f;
+    }
+    for (int i = 0; i < side.bishops; i++) {
+        int r = side.bishopSquares[i].rank();
+        if (r >= oppHalfStart && r <= oppHalfEnd) score += 0.04f;
+    }
+    return score;
+}
+
+bool Evaluator::isOutpostSquare(int rank, int file, const EvalSideData& enemy, bool pieceIsBlack) {
+    for (int df = -1; df <= 1; df += 2) {
+        int ff = file + df;
+        if (ff < 0 || ff >= 8 || enemy.pawnFiles[ff] == 0) continue;
+        if (!pieceIsBlack) {
+            if (enemy.pawnMinRank[ff] < rank) return false;
+        } else {
+            if (enemy.pawnMaxRank[ff] > rank) return false;
+        }
+    }
+    return true;
+}
+
+bool Evaluator::isSupportedByPawn(int rank, int file, const EvalSideData& side, bool pieceIsBlack) {
+    int behindRank = pieceIsBlack ? rank + 1 : rank - 1;
+    for (int df = -1; df <= 1; df += 2) {
+        int ff = file + df;
+        if (ff < 0 || ff >= 8 || side.pawnFiles[ff] == 0) continue;
+        if (side.pawnMinRank[ff] <= behindRank && side.pawnMaxRank[ff] >= behindRank)
+            return true;
+    }
+    return false;
+}
+
+float Evaluator::evalOutposts(const EvalSideData& side, const EvalSideData& enemy, bool black, float midgameT, uint64_t enemyAttacks) {
+    float score = 0.0f;
+    for (int i = 0; i < side.knightCount; i++) {
+        int r = side.knights[i].rank(), f = side.knights[i].file();
+        int sq = r * 8 + f;
+        if ((enemyAttacks >> sq) & 1) continue;
+        if (isOutpostSquare(r, f, enemy, black)) {
+            float bonus = 0.20f;
+            if (isSupportedByPawn(r, f, side, black)) bonus += 0.14f;
+            score += bonus * midgameT;
+        }
+    }
+    for (int i = 0; i < side.bishops; i++) {
+        int r = side.bishopSquares[i].rank(), f = side.bishopSquares[i].file();
+        if (isOutpostSquare(r, f, enemy, black) && isSupportedByPawn(r, f, side, black)) {
+            score += 0.10f * midgameT;
+        }
+    }
+    return score;
+}
+
+int Evaluator::seeValue(Piece piece) {
+    int idx = int(piece);
+    return idx >= 0 && idx < 16 ? SEE_VAL[idx] : 0;
+}
+
+float Evaluator::drawScaleFactor(const EvalSideData& white, const EvalSideData& black) {
+    // KK, KN vs K, KB vs K — all theoretical draws
+    if (white.rookCount == 0 && black.rookCount == 0 &&
+        white.queenCount == 0 && black.queenCount == 0 &&
+        white.pawnCount == 0 && black.pawnCount == 0)
+    {
+        int wMinors = white.knightCount + white.bishops;
+        int bMinors = black.knightCount + black.bishops;
+
+        if ((wMinors <= 1 && bMinors == 0) || (bMinors <= 1 && wMinors == 0))
+            return 0.0f;
+
+        // KNN vs K — generally a draw
+        if ((white.knightCount == 2 && white.bishops == 0 && bMinors == 0) ||
+            (black.knightCount == 2 && black.bishops == 0 && wMinors == 0))
+            return 0.05f;
+    }
+
+    return 1.0f;
+}
+
+float Evaluator::endgameKingActivity(Position king) {
+    int centerDist = std::min({
+        manhattan(king, Position(3, 3)),
+        manhattan(king, Position(3, 4)),
+        manhattan(king, Position(4, 3)),
+        manhattan(king, Position(4, 4))
+    });
+    return -0.09f * float(centerDist);
+}
+
+float Evaluator::kingSupportsPawns(const EvalSideData& side, const EvalSideData& enemy, bool black) {
+    float score = 0.0f;
+    for (int i = 0; i < side.pawnCount; i++) {
+        int promotionRank = black ? 0 : 7;
+        Position promo(promotionRank, side.pawns[i].file());
+        int ownDist   = manhattan(side.kingPos, side.pawns[i]);
+        int enemyDist = manhattan(enemy.kingPos, promo);
+        score += 0.05f * float(6 - std::min(6, ownDist));
+        score += 0.06f * float(enemyDist);
+    }
+    return score;
+}
+
+float Evaluator::mopUpEval(const EvalSideData& winning, const EvalSideData& losing, float advantage) {
+    if (!winning.hasKing || !losing.hasKing) return 0.0f;
+
+    int lf = losing.kingPos.file(), lr = losing.kingPos.rank();
+    int cornerDist = std::min(lf, 7 - lf) + std::min(lr, 7 - lr);
+    int kingDist   = manhattan(winning.kingPos, losing.kingPos);
+
+    float cornerPressure = 0.07f * float(6 - cornerDist);
+    float kingProximity  = 0.04f * float(14 - kingDist);
+
+    return advantage * (cornerPressure + kingProximity);
+}
+
+float Evaluator::pawnKingRaceBonus(const EvalSideData& side, const EvalSideData& enemy, bool black) {
+    float score = 0.0f;
+    for (int i = 0; i < side.pawnCount; i++) {
+        int promotionRank = black ? 0 : 7;
+        int stepsToPromo = black ? side.pawns[i].rank() : 7 - side.pawns[i].rank();
+        if (stepsToPromo <= 0) continue;
+
+        Position promoSquare(promotionRank, side.pawns[i].file());
+        int enemyKingSteps = manhattan(enemy.kingPos, promoSquare);
+
+        int gap = enemyKingSteps - stepsToPromo;
+        if (gap >= 2)       score += 2.50f;
+        else if (gap >= 0)  score += 0.80f;
+        else if (gap >= -1) score += 0.20f;
+    }
+    return score;
+}
+
+float Evaluator::evalPieceSafetyCached(const EvalSideData& side, bool black, float endgameT, uint64_t friendlyAttacks, uint64_t enemyAttacks) {
+    float penalty = 0.0f;
+    float safetyWeight = 0.25f + 0.40f * endgameT;
+
+    auto check = [&](Position pos, Piece piece) {
+        if (piece == EMPTY || (piece & 7) == 6) return; // skip kings
+        int sq = pos.index;
+        bool attacked  = (enemyAttacks   >> sq) & 1;
+        bool defended  = (friendlyAttacks >> sq) & 1;
+        if (!attacked) return;
+        if (defended)  return; // attacked but guarded — fine
+        float value = pieceValueMg(piece) * (1.0f - endgameT)
+                    + pieceValueEg(piece) * endgameT;
+        penalty += value * 0.40f * safetyWeight;
+    };
+
+    Piece pawn   = black ? BLACK_PAWN   : WHITE_PAWN;
+    Piece knight = black ? BLACK_KNIGHT : WHITE_KNIGHT;
+    Piece bishop = black ? BLACK_BISHOP : WHITE_BISHOP;
+    Piece rook   = black ? BLACK_ROOK   : WHITE_ROOK;
+    Piece queen  = black ? BLACK_QUEEN  : WHITE_QUEEN;
+
+    for (int i = 0; i < side.pawnCount;   i++) check(side.pawns[i],         pawn);
+    for (int i = 0; i < side.knightCount; i++) check(side.knights[i],       knight);
+    for (int i = 0; i < side.bishops;     i++) check(side.bishopSquares[i], bishop);
+    for (int i = 0; i < side.rookCount;   i++) check(side.rooks[i],         rook);
+    for (int i = 0; i < side.queenCount;  i++) check(side.queens[i],        queen);
+
+    return -penalty;
 }

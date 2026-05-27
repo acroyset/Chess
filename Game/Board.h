@@ -5,7 +5,7 @@
 #ifndef BOARD_H
 #define BOARD_H
 #include "BoardState.h"
-#include "AI/OpeningBook.h"
+#include "../AI/OpeningBook.h"
 #include "offsets.h"
 #include <sstream>
 

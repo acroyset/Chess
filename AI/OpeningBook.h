@@ -14,8 +14,10 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cstdint>
-#include "../BoardState.h"
-#include "../Board.h"
+#include <map>
+#include <unordered_set>
+
+#include "../Game/BoardState.h"
 
 struct BookMove {
     Move move;

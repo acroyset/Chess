@@ -6,7 +6,7 @@
 #define TRANSPOSITIONTABLE_H
 
 #include <cstdint>
-#include "../BoardState.h"
+#include "../Game/BoardState.h"
 
 enum Flag : uint8_t {
 	FAIL,

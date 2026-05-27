@@ -8,7 +8,7 @@
 #include <iostream>
 #include <SFML/Graphics.hpp>
 
-#include "../Board.h"
+#include "../Game/Board.h"
 
 class PieceDrawer {
     sf::Texture textureMap;

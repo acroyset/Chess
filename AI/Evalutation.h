@@ -1,9 +1,7 @@
 #ifndef EVALUTATION_H
 #define EVALUTATION_H
 
-#include <algorithm>
-#include "../Board.h"
-#include "../offsets.h"
+#include "../Game/Board.h"
 
 // -----------------------------------------------------------------------
 // Side data: pre-collected piece positions, pawn structure info, etc.
@@ -38,6 +36,14 @@ struct EvalSideData {
     }
 };
 
+struct AttackData {
+    uint64_t mask = 0;          // full attack mask (used by piece safety + threats)
+    float    mobilityMg = 0.0f; // weighted mobility score, midgame
+    float    mobilityEg = 0.0f; // weighted mobility score, endgame
+    int      kingZoneHits[6]{}; // hits per piece type (indexed 1-5) into enemy king zone
+    int      kingZonePieces = 0;// number of distinct piece types hitting the zone
+};
+
 class Evaluator {
 
 public:
@@ -52,8 +58,6 @@ private:
     // Fast bitboard-based piece lookup (prefer over evalPieceAt in hot loops)
     [[nodiscard]] static Piece evalPieceAtBB(const Board& board, int sq);
 
-    [[nodiscard]] static float evalMobilityCached(const Board& board, const EvalSideData& white, const EvalSideData& black, float midgameT, float endgameT);
-
     // -----------------------------------------------------------------------
     // King attack evaluation
     // FIX: countSlidingKingZoneAttacks now correctly stops the ray at the
@@ -61,11 +65,7 @@ private:
     // the ray was physically blocked by an intervening piece.
     // -----------------------------------------------------------------------
 
-
-    template <size_t N>
-    [[nodiscard]] static int countSlidingKingZoneAttacks(const Board& board, Position from, const int (&directions)[N][2], uint64_t zone);
-
-    [[nodiscard]] static float evalKingSafety(const Board& board, const EvalSideData& defender, const EvalSideData& attacker, bool defenderBlack, float midgameT);
+    [[nodiscard]] static float evalKingSafety(const EvalSideData& defender, const EvalSideData& attacker, bool defenderBlack, float midgameT, const AttackData& attackerData);
 
     // -----------------------------------------------------------------------
     // King shield
@@ -82,7 +82,7 @@ private:
     // enemy pawns or lead off board). Distinct from mobility: a piece can
     // have legal moves but all of them lose material.
     // -----------------------------------------------------------------------
-    [[nodiscard]] static float evalTrappedPieces(const Board& board, const EvalSideData& side, const EvalSideData& enemy, bool black, float midgameT);
+    [[nodiscard]] static float evalTrappedPieces(const Board& board, const EvalSideData& side, const EvalSideData& enemy, bool black, float midgameT, uint64_t enemyAllAttacks);
 
     // -----------------------------------------------------------------------
     // Castling status
@@ -103,10 +103,74 @@ private:
     // -----------------------------------------------------------------------
     [[nodiscard]] static float evalThreats(const Board& board, const EvalSideData& us, const EvalSideData& them, bool usBlack, uint64_t enemyAttacks);
 
+    [[nodiscard]] static AttackData buildAttackData(const Board& board, const EvalSideData& side, bool black, uint64_t enemyKingZone);
+
     // -----------------------------------------------------------------------
-    // Attack mask builders — use already-collected piece positions
+    // King Pawns Attacked
     // -----------------------------------------------------------------------
-    [[nodiscard]] static uint64_t buildAttackMask(const Board& board, const EvalSideData& side, bool black);
+    [[nodiscard]] static int countPawnKingZoneAttacks(Position from, bool black, uint64_t zone);
+
+    // -----------------------------------------------------------------------
+    // Mobility
+    // -----------------------------------------------------------------------
+    [[nodiscard]] static float knightMobility(Position from, uint64_t ownPieces) ;
+
+    [[nodiscard]] static float slidingMobility(Position from, uint64_t occ, uint64_t ownPieces, const int dirs[][2], int numDirs);
+
+    // -----------------------------------------------------------------------
+    // Pawn structure
+    // -----------------------------------------------------------------------
+    [[nodiscard]] static float evalPawnStructureCached(const EvalSideData& side, const EvalSideData& enemy, bool black, float endgameT);
+
+    // -----------------------------------------------------------------------
+    // Rooks: open/half-open files, seventh rank
+    // -----------------------------------------------------------------------
+    [[nodiscard]] static float evalRooksCached(const EvalSideData& side, const EvalSideData& enemy, bool black);
+    [[nodiscard]] static float rookBehindPassedPawn(const EvalSideData& side, const EvalSideData& enemy, bool black);
+
+    // -----------------------------------------------------------------------
+    // Space evaluation
+    // -----------------------------------------------------------------------
+    [[nodiscard]] static float evalSpace(const EvalSideData& side, bool black);
+
+    // -----------------------------------------------------------------------
+    // Outpost detection
+    // -----------------------------------------------------------------------
+    [[nodiscard]] static bool isOutpostSquare(int rank, int file, const EvalSideData& enemy, bool pieceIsBlack);
+
+    [[nodiscard]] static bool isSupportedByPawn(int rank, int file, const EvalSideData& side, bool pieceIsBlack);
+
+    [[nodiscard]] static float evalOutposts(const EvalSideData& side, const EvalSideData& enemy, bool black, float midgameT, uint64_t enemyAttacks);
+
+    // SEE piece values (centipawns-ish, integers for speed)
+    [[nodiscard]] static int seeValue(Piece piece);
+
+    // -----------------------------------------------------------------------
+    // Insufficient material / draw heuristics
+    // -----------------------------------------------------------------------
+    [[nodiscard]] static float drawScaleFactor(const EvalSideData& white, const EvalSideData& black);
+
+    // -----------------------------------------------------------------------
+    // Endgame king activity
+    // -----------------------------------------------------------------------
+    [[nodiscard]] static float endgameKingActivity(Position king);
+
+    [[nodiscard]] static float kingSupportsPawns(const EvalSideData& side, const EvalSideData& enemy, bool black);
+
+    // -----------------------------------------------------------------------
+    // Mop-up
+    // -----------------------------------------------------------------------
+    [[nodiscard]] static float mopUpEval(const EvalSideData& winning, const EvalSideData& losing, float advantage);
+
+    // -----------------------------------------------------------------------
+    // Pawn-king race
+    // -----------------------------------------------------------------------
+    [[nodiscard]] static float pawnKingRaceBonus(const EvalSideData& side, const EvalSideData& enemy, bool black);
+
+    // -----------------------------------------------------------------------
+    // Piece safety — now O(pieces) bitwise lookups, no ray scans.
+    // -----------------------------------------------------------------------
+    [[nodiscard]] static float evalPieceSafetyCached(const EvalSideData& side, bool black, float endgameT, uint64_t friendlyAttacks, uint64_t enemyAttacks);
 
 };
 
