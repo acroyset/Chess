@@ -1059,7 +1059,7 @@ private:
 
         uint64_t hash = board.getHash();
         if (!cachedStaticEvalValid || cachedEvalHash != hash) {
-            cachedStaticEval = evaluateBoard(board);
+            cachedStaticEval = Evaluator::evaluate(board);
             cachedEvalHash = hash;
             cachedStaticEvalValid = true;
         }
