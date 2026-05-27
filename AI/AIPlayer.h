@@ -35,12 +35,10 @@ class AIPlayer : public Player {
 
 public:
 
-	explicit AIPlayer(Searcher* searcher, float startingTime, float increment)
-		: Player(startingTime, increment), searcher(searcher) {}
-	explicit AIPlayer(Searcher* searcher, float fixedThinkingSeconds)
-		: thinkingTimeMs(std::max(1, int(std::round(fixedThinkingSeconds * 1000.0f)))), searcher(searcher) {}
-	explicit AIPlayer(Searcher* searcher, double fixedThinkingSeconds)
-		: AIPlayer(searcher, float(fixedThinkingSeconds)) {}
+	explicit AIPlayer(Searcher* searcher, float startingTime, float increment, const std::string& name = "")
+		: Player(startingTime, increment, name.empty() ? "My AI" : name), searcher(searcher) {}
+	explicit AIPlayer(Searcher* searcher, float fixedThinkingSeconds, const std::string& name = "")
+		: Player(name.empty() ? "My AI" : name), thinkingTimeMs(std::max(1, int(std::round(fixedThinkingSeconds * 1000.0f)))), searcher(searcher) {}
 
 	std::optional<Move> selectMove(Board& board, sf::RenderWindow& window) override {
 

@@ -2,6 +2,7 @@
 #include <sstream>
 
 #include "AI/AIPlayer.h"
+#include "Stockfish/StockfishPlayer.h"
 #include "HumanPlayer.h"
 #include "Render/MoveDrawer.h"
 #include "Render/PieceDrawer.h"
@@ -69,7 +70,6 @@ int main() {
     std::unique_ptr<Player> whitePlayer = std::make_unique<AIPlayer>(&searcher, 15.0f * 60.0f, 10.0f);
     std::unique_ptr<Player> blackPlayer = std::make_unique<AIPlayer>(&searcher, 15.0f * 60.0f, 10.0f);
 
-
     bool blackAtBottom = false;
 
     auto applyBoardOrientation = [&]() {
@@ -84,6 +84,34 @@ int main() {
 
     std::vector<MoveRecord> moveHistory;
     AIPlayer* lastCompletedAi = nullptr;
+    std::string gameStartFen = boardToFEN(board);
+
+    auto playedMoves = [&]() {
+        std::vector<Move> moves;
+        moves.reserve(moveHistory.size());
+        for (const MoveRecord& record : moveHistory) {
+            moves.push_back(record.move);
+        }
+        return moves;
+    };
+
+    auto syncStockfishHistory = [&]() {
+        std::vector<Move> moves = playedMoves();
+        if (auto* stockfishPlayer = dynamic_cast<StockfishPlayer*>(whitePlayer.get())) {
+            stockfishPlayer->setGameHistory(gameStartFen, moves);
+        }
+        if (auto* stockfishPlayer = dynamic_cast<StockfishPlayer*>(blackPlayer.get())) {
+            stockfishPlayer->setGameHistory(gameStartFen, moves);
+        }
+    };
+
+    auto restartEvaluation = [&]() {
+        searcher.endSearch();
+        searcher.startSearch(board);
+    };
+
+    syncStockfishHistory();
+    restartEvaluation();
 
     auto resetPlayerInput = [&]() {
         whitePlayer->resetInput();
@@ -107,12 +135,13 @@ int main() {
             Board newBoard(fen);
             board = newBoard;
             moveHistory.clear();
+            gameStartFen = boardToFEN(board);
             lastCompletedAi = nullptr;
             auto fenCaptures = inferCapturedFromFEN(board);
             renderer.setFenCaptures(fenCaptures);
             resetPlayerInput();
-            searcher.endSearch();
-            searcher.startSearch(board);
+            syncStockfishHistory();
+            restartEvaluation();
             std::cerr << "FEN loaded OK\n";
         } catch (...) {
             std::cerr << "Invalid FEN\n";
@@ -221,10 +250,10 @@ int main() {
             moveHistory.pop_back();
             lastCompletedAi = nullptr;
             resetPlayerInput();
+            syncStockfishHistory();
             skipMoveSelection = true;
 
-            searcher.endSearch();
-            searcher.startSearch(board);
+            restartEvaluation();
         }
 
         window.clear();
@@ -269,8 +298,8 @@ int main() {
 
 	            appendCheckSuffix(san, board);
 	            moveHistory.push_back({move, san, capturedPiece});
-	            searcher.endSearch();
-	            searcher.startSearch(board);
+	            syncStockfishHistory();
+	            restartEvaluation();
 	        }
 	    }
 

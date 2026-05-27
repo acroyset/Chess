@@ -11,10 +11,12 @@ class Player {
     float timeRemaining = 0.0f;
 	float increment = 0.0f;
 
+	std::string name;
+
 public:
-    explicit Player(float startingTime, float increment)
-        : timeRemaining(startingTime), increment(increment) {timed = true;}
-	Player() {timed = false;}
+    explicit Player(float startingTime, float increment, const std::string& name)
+        : timeRemaining(startingTime), increment(increment), name(name) {timed = true;}
+	explicit Player(std::string  name) : name(std::move(name)) {timed = false;}
 
 	virtual ~Player() = default;
 
@@ -48,6 +50,10 @@ public:
 
 	[[nodiscard]] bool isTimed() const {
 		return timed;
+	}
+
+	[[nodiscard]] std::string getName() const {
+		return name;
 	}
 };
 

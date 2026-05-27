@@ -39,6 +39,8 @@ public:
     [[nodiscard]] bool getPlayerTurn() const {return state.playerTurn;}
     [[nodiscard]] bool canCastleKingSide(bool black) const {return black ? state.blackCastleKing : state.whiteCastleKing;}
     [[nodiscard]] bool canCastleQueenSide(bool black) const {return black ? state.blackCastleQueen : state.whiteCastleQueen;}
+    [[nodiscard]] Position getLastPawnMoved2() const {return state.lastPawnMoved2;}
+    [[nodiscard]] int getHalfmoveClock() const {return state.lastPawnMoveOrCapture;}
     [[nodiscard]] float getWhiteMg() const {return state.whiteMg;}
     [[nodiscard]] float getWhiteEg() const {return state.whiteEg;}
     [[nodiscard]] float getBlackMg() const {return state.blackMg;}

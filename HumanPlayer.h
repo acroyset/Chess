@@ -12,16 +12,15 @@ class HumanPlayer : public Player {
     bool pressedLast = false;
     MoveList validMoves;
     float tileSize;
-    float boardX;
     bool blackAtBottom = false;
 
 public:
-    explicit HumanPlayer(float tileSize, float startingTime, float increment, float boardX = 0.0f)
-        : Player(startingTime, increment), tileSize(tileSize), boardX(boardX) {
+    explicit HumanPlayer(float tileSize, float startingTime, float increment, const std::string& name = "")
+        : Player(startingTime, increment, name), tileSize(tileSize) {
         selectedPosition.setNone();
     }
-    explicit HumanPlayer(float tileSize, float boardX = 0.0f)
-        : tileSize(tileSize), boardX(boardX) {
+    explicit HumanPlayer(float tileSize, const std::string& name = "")
+        : Player(name), tileSize(tileSize) {
         selectedPosition.setNone();
     }
 
@@ -48,7 +47,7 @@ public:
                 sf::Vector2i localPos = sf::Mouse::getPosition(window);
 
                 int displayRank = int(std::floor(float(localPos.y) / tileSize));
-                int displayFile = int(std::floor((float(localPos.x) - boardX) / tileSize));
+                int displayFile = int(std::floor(float(localPos.x) / tileSize));
                 int rank = blackAtBottom ? displayRank : 7 - displayRank;
                 int file = blackAtBottom ? 7 - displayFile : displayFile;
 

@@ -10,6 +10,7 @@ find_package(SFML 3 REQUIRED COMPONENTS Graphics Window System)
 add_executable(Chess main.cpp
         AI/Searcher.cpp
         AI/Evaluation.cpp
+        Stockfish/StockfishPlayer.cpp
         Game/Board.cpp
 )
 

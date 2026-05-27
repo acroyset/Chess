@@ -16,7 +16,7 @@ inline std::string boardToFEN(const Board& board) {
                 empty++;
             } else {
                 if (empty > 0) { fen += char('0' + empty); empty = 0; }
-                const char pieceChars[] = " PNBRQKxpnbrqk";
+                const char pieceChars[] = " PNBRQKxxpnbrqk";
                 fen += pieceChars[int(p)];
             }
         }
@@ -33,7 +33,20 @@ inline std::string boardToFEN(const Board& board) {
     if (board.canCastleQueenSide(true))  castle += 'q';
     if (castle.empty()) castle = "-";
     fen += castle;
-    fen += " - 0 1";
+    fen += ' ';
+    Position lastPawnMoved2 = board.getLastPawnMoved2();
+    if (lastPawnMoved2.isNone()) {
+        fen += '-';
+    } else {
+        int epRank = board.getPlayerTurn()
+            ? int(lastPawnMoved2.rank()) - 1
+            : int(lastPawnMoved2.rank()) + 1;
+        fen += char('a' + lastPawnMoved2.file());
+        fen += char('1' + epRank);
+    }
+    fen += ' ';
+    fen += std::to_string(board.getHalfmoveClock());
+    fen += " 1";
     return fen;
 }
 

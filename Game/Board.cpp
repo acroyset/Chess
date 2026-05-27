@@ -119,7 +119,7 @@ Board::Board(const std::string& fen) {
         int epFile = epPart[0] - 'a';
         int epRank = epPart[1] - '1';
 
-        if (state.playerTurn == WHITE) {
+        if (state.playerTurn) {
             state.lastPawnMoved2 = {epRank + 1, epFile};
         } else {
             state.lastPawnMoved2 = {epRank - 1, epFile};

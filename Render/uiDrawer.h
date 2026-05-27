@@ -181,6 +181,8 @@ class uiDrawer {
     bool blackFlagged = false;
     bool canUndoMove = false;
     bool analyticsMode = false;
+    std::string whiteName;
+    std::string blackName;
 
     sf::Color panelColor{22, 24, 27};
     sf::Color sectionColor{31, 34, 38};
@@ -237,7 +239,7 @@ public:
         bool bottomPlayerBlack = blackAtBottom;
         float bottomPlayerY = float(height) - panelTop() - playerCardH();
 
-        drawPlayerCard(window, board, topPlayerBlack, y, playerCardH());
+        drawPlayerCard(window, board, topPlayerBlack, y, playerCardH(), topPlayerBlack ? blackName : whiteName);
         y += playerCardH() + sectionGap();
 
         drawControlsSection(window, y, controlsSectionH());
@@ -257,7 +259,7 @@ public:
             drawMoveHistory(window, y, historyH);
         }
 
-        drawPlayerCard(window, board, bottomPlayerBlack, bottomPlayerY, playerCardH());
+        drawPlayerCard(window, board, bottomPlayerBlack, bottomPlayerY, playerCardH(), topPlayerBlack ? whiteName : blackName);
     }
 
     void setAnalyticsMode(bool enabled) {
@@ -294,6 +296,12 @@ public:
         fps = deltaTime > 0.0f ? int(1.0f / deltaTime) : 0;
         blackToMove = board.getPlayerTurn();
         turnText = blackToMove ? "Black to move" : "White to move";
+
+        whiteName = whitePlayer->getName();
+        blackName = blackPlayer->getName();
+
+        if (whiteName.empty()) whiteName = "White";
+        if (blackName.empty()) blackName = "White";
 
         lastAi = latestAi;
 
@@ -623,7 +631,7 @@ private:
         window.draw(divider);
     }
 
-    void drawPlayerCard(sf::RenderWindow& window, const Board& board, bool black, float y, float h) {
+    void drawPlayerCard(sf::RenderWindow& window, const Board& board, bool black, float y, float h, const std::string& name) {
         auto captures = buildCapturedCounts();
         int whiteMaterial = 0;
         int blackMaterial = 0;
@@ -643,10 +651,10 @@ private:
         int materialDiff = whiteMaterial - blackMaterial;
 
         drawSection(window, y, h);
-        drawPlayerRow(window, black, captures, black ? (materialDiff < 0 ? -materialDiff : 0) : (materialDiff > 0 ? materialDiff : 0), y + 7.0f);
+        drawPlayerRow(window, black, captures, black ? (materialDiff < 0 ? -materialDiff : 0) : (materialDiff > 0 ? materialDiff : 0), y + 7.0f, name);
     }
 
-    void drawPlayerRow(sf::RenderWindow& window, bool black, const std::array<int, 16>& captures, int materialPlus, float y) {
+    void drawPlayerRow(sf::RenderWindow& window, bool black, const std::array<int, 16>& captures, int materialPlus, float y, const std::string& name) {
         float x = sectionX() + pad;
         float w = sectionW() - pad * 2.0f;
         constexpr float rowH = 74.0f;
@@ -666,7 +674,7 @@ private:
         activeLine.setFillColor(lineColor);
         window.draw(activeLine);
 
-        drawText(window, black ? "BLACK" : "WHITE", 24, x + 14.0f, y + 8.0f, active ? primaryText : mutedText, true);
+        drawText(window, name, 24, x + 14.0f, y + 8.0f, active ? primaryText : mutedText, true);
         drawTextRight(window, timed ? formatClock(seconds) : "--:--", 54, x + w - 14.0f, y - 1.0f, timed ? clockColor(seconds) : primaryText, true);
         drawCapturedMaterial(window, black, captures, materialPlus, x + 14.0f, y + 49.0f);
     }
