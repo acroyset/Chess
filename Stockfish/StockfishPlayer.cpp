@@ -422,7 +422,7 @@ StockfishPlayer::~StockfishPlayer() {
     resetInput();
 }
 
-std::optional<Move> StockfishPlayer::selectMove(Board& board, sf::RenderWindow&) {
+std::optional<Move> StockfishPlayer::selectMove(Board& board) {
     if (!started) {
         resetInput();
 

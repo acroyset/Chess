@@ -3,7 +3,8 @@
 
 #include <algorithm>
 #include <optional>
-#include <SFML/Graphics.hpp>
+#include <string>
+#include <utility>
 #include "Game/Board.h"
 
 class Player {
@@ -20,12 +21,13 @@ public:
 
 	virtual ~Player() = default;
 
-	virtual std::optional<Move> selectMove(
-		Board& board,
-		sf::RenderWindow& window
-	) = 0;
+	virtual std::optional<Move> selectMove(Board& board) = 0;
 
 	virtual void resetInput() {}
+
+	[[nodiscard]] virtual bool requiresDisplay() const {
+		return false;
+	}
 
 	void tickClock(float deltaTime) {
 		timeRemaining = std::max(0.0f, timeRemaining - deltaTime);

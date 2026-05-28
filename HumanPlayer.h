@@ -5,6 +5,10 @@
 #ifndef HUMANPLAYER_H
 #define HUMANPLAYER_H
 
+#include <cmath>
+
+#include <SFML/Graphics.hpp>
+
 #include "Player.h"
 
 class HumanPlayer : public Player {
@@ -13,6 +17,7 @@ class HumanPlayer : public Player {
     MoveList validMoves;
     float tileSize;
     bool blackAtBottom = false;
+    sf::RenderWindow* window = nullptr;
 
 public:
     explicit HumanPlayer(float tileSize, float startingTime, float increment, const std::string& name = "")
@@ -34,8 +39,12 @@ public:
         blackAtBottom = value;
     }
 
-    std::optional<Move> selectMove(Board& board, sf::RenderWindow& window) override {
-        if (!window.hasFocus()) {
+    void setInputWindow(sf::RenderWindow* inputWindow) {
+        window = inputWindow;
+    }
+
+    std::optional<Move> selectMove(Board& board) override {
+        if (window == nullptr || !window->hasFocus()) {
             resetInput();
             return std::nullopt;
         }
@@ -44,7 +53,7 @@ public:
             if (!pressedLast) {
                 pressedLast = true;
 
-                sf::Vector2i localPos = sf::Mouse::getPosition(window);
+                sf::Vector2i localPos = sf::Mouse::getPosition(*window);
 
                 int displayRank = int(std::floor(float(localPos.y) / tileSize));
                 int displayFile = int(std::floor(float(localPos.x) / tileSize));
@@ -85,6 +94,10 @@ public:
 
     [[nodiscard]] MoveList getShownMoves() const override {
         return validMoves;
+    }
+
+    [[nodiscard]] bool requiresDisplay() const override {
+        return true;
     }
 };
 

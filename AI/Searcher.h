@@ -87,7 +87,7 @@ class Searcher {
 
     std::chrono::steady_clock::time_point startTime;
 
-    int threadCount = std::max(1, int(std::thread::hardware_concurrency()));
+    int threadCount = int(std::thread::hardware_concurrency());
 
 public:
     Searcher() = default;

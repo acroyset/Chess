@@ -40,7 +40,7 @@ public:
 	explicit AIPlayer(Searcher* searcher, float fixedThinkingSeconds, const std::string& name = "")
 		: Player(name.empty() ? "My AI" : name), thinkingTimeMs(std::max(1, int(std::round(fixedThinkingSeconds * 1000.0f)))), searcher(searcher) {}
 
-	std::optional<Move> selectMove(Board& board, sf::RenderWindow& window) override {
+	std::optional<Move> selectMove(Board& board) override {
 
 		if (!started) {
 			currentSearchBlackToMove = board.getPlayerTurn();

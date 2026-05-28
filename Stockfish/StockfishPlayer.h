@@ -52,7 +52,7 @@ public:
     StockfishPlayer(const StockfishPlayer&) = delete;
     StockfishPlayer& operator=(const StockfishPlayer&) = delete;
 
-    std::optional<Move> selectMove(Board& board, sf::RenderWindow& window) override;
+    std::optional<Move> selectMove(Board& board) override;
     void resetInput() override;
     void setGameHistory(const std::string& startFen, const std::vector<Move>& moves);
 

@@ -5,6 +5,15 @@
 #ifndef FENSAVELOADER_H
 #define FENSAVELOADER_H
 
+#include <algorithm>
+#include <array>
+#include <cstdio>
+#include <string>
+#include <vector>
+
+#include "Board.h"
+#include "MoveNotation.h"
+
 // ---- FEN export ----
 inline std::string boardToFEN(const Board& board) {
     std::string fen;
